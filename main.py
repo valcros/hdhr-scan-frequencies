@@ -1,5 +1,5 @@
 # HD Homerun Scan Channels and produce a CSV file of discovered programs
-# Version 1.41 2023-09-24 Mark Munger
+# Version 2.0 2023-09-24 Mark Munger
 
 import os
 import csv
