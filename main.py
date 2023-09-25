@@ -1,5 +1,5 @@
 # HD Homerun Scan Channels and produce a CSV file of discovered programs
-# Version 2.0 2023-09-24 Mark Munger
+# Version 2.1 2023-09-25 Mark Munger
 
 import os
 import csv
@@ -22,13 +22,12 @@ def discover_devices() -> List[str]:
         discovered_devices = result.strip().split("\n")
         # Filter out 'no devices found'
         return [dev for dev in discovered_devices if "no devices found" not in dev.lower()]
-    except Exception as e:
-        print("Error discovering devices:", e)
+    except Exception as discover_error:
+        print("Error discovering devices:", discover_error)
         return []
 
 
 # Display a numbered choice menu for devices
-# Modified Display a numbered choice menu for devices
 def select_device() -> str:
     retry_count = 0  # Initialize a counter for automatic retries
 
@@ -133,9 +132,8 @@ def update_lock_info(lock_info: Dict, new_data: Dict) -> None:
     lock_info.update(new_data)
 
 
-# parse_lock_info function
-# Modified the parse_lock_info function to concatenate information on a single line
-def parse_lock_info(scan_results: List[str]) -> List[Dict[str, str]]:
+# parse_results_info function
+def parse_results_info(scan_results: List[str]) -> List[Dict[str, str]]:
     parsed_data = []  # Initialize an empty list to store parsed data
     frequency_info = {}  # Initialize a dictionary to store information for the current frequency
 
@@ -160,8 +158,8 @@ def parse_lock_info(scan_results: List[str]) -> List[Dict[str, str]]:
     return parsed_data
 
 
-# Query the selected tuner or tuners
-# Modified Query the selected tuner or Auto select tuners
+# Query the selected tuner and return lines of scan results
+# Modified Query the selected tuner or Auto select tuner
 def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     for tuner in tuners:
         try:
@@ -193,21 +191,21 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
             print(f"Invalid tuner number: {tuner}")
             return []
 
-        except Exception as e:
-            print(f"Unexpected error: {e}")
+        except Exception as query_error:
+            print(f"Unexpected error: {query_error}")
             return []
 
     print("All tuners are either locked or failed to lock. Exiting.")
     return []
 
 
-# Constants for program count
+# Constants for discovered program count from HDHR
 MIN_PROGRAM = 1
 MAX_PROGRAM = 20
 
 # Main program
 if __name__ == "__main__":
-    USE_LOCAL_TEST_FILE = False  # Set this to True for local testing, otherwise False
+    USE_LOCAL_TEST_FILE = False  # True for local testing with ScanData.txt, otherwise False
 
     # Get system name
     system_name = platform.node()
@@ -221,7 +219,7 @@ if __name__ == "__main__":
     filename = f"{system_name}_{date_str}_{hour_str}.CSV"
 
     try:
-        # Use 'with' for better resource management
+        # Open CSV file for output, scan and output data
         with open(filename, 'w', newline='') as output_file:
             output_writer = csv.writer(output_file)
 
@@ -241,7 +239,7 @@ if __name__ == "__main__":
                 if mode == -1:
                     exit()
 
-                # Set list of tuners based on selected mode
+                # Set list of tuners based on selected tuner or AUTO to find an open tuner
                 tuners = [mode] if mode != 4 else [0, 1, 2, 3]
 
                 # Query the selected tuner(s), return all scan frequency info from HDHR
@@ -254,7 +252,7 @@ if __name__ == "__main__":
 
             # Parse the results
             print("Parsing Scan Results")
-            parsed_data = parse_lock_info(results)
+            parsed_data = parse_results_info(results)
 
             if not parsed_data:
                 print("No valid data parsed.")
@@ -265,7 +263,7 @@ if __name__ == "__main__":
             header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
                       'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
 
-            for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Use constants for loop range
+            for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Interate through program headers
                 header.append(f'Program{i}')
 
             output_writer.writerow(header)
@@ -283,7 +281,7 @@ if __name__ == "__main__":
                     data.get('TSID', '')
                 ]
 
-                for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Use constants for loop range
+                for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Interate through program data
                     program_key = f'Program{i}'
                     program_value = data.get(program_key, '')
                     row.append(program_value)
@@ -292,8 +290,8 @@ if __name__ == "__main__":
 
             print("Data successfully written to 'output.csv'.")
 
-    except Exception as e:  # Consider catching specific exceptions
-        print(f"An error occurred: {e}")
+    except Exception as general_error:  # Will add specific exceptions in future
+        print(f"An error occurred: {general_error}")
 
     # Close the CSV file
     output_file.close()
