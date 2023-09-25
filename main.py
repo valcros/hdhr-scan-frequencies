@@ -4,6 +4,9 @@
 import os
 import csv
 import re
+import time
+from datetime import datetime
+import platform
 from typing import List, Dict
 
 # Check hdhomerun_config before anything else
@@ -17,23 +20,50 @@ def discover_devices() -> List[str]:
     try:
         result = os.popen("hdhomerun_config discover -4").read()
         discovered_devices = result.strip().split("\n")
-        return discovered_devices
+        # Filter out 'no devices found'
+        return [dev for dev in discovered_devices if "no devices found" not in dev.lower()]
     except Exception as e:
         print("Error discovering devices:", e)
         return []
 
 
 # Display a numbered choice menu for devices
-def select_device(discovered_devices: List[str]) -> str:
-    print("Select an HDHomeRun device:")
-    for i, device in enumerate(discovered_devices):
-        print(f"{i + 1}) {device}")
-    choice = int(input("Enter the device number: ")) - 1
-    if 0 <= choice < len(discovered_devices):
-        return discovered_devices[choice]
-    else:
-        print("Invalid choice.")
-        return ""
+# Modified Display a numbered choice menu for devices
+def select_device() -> str:
+    retry_count = 0  # Initialize a counter for automatic retries
+
+    while True:
+        discovered_devices = discover_devices()
+
+        if discovered_devices:
+            print("Select an HDHomeRun device:")
+            for i, device in enumerate(discovered_devices):
+                print(f"{i + 1}) {device}")
+            print(f"{len(discovered_devices) + 1}) Rediscover devices")  # Add Rediscovery option
+
+            choice = int(input("Enter the device number: ")) - 1
+
+            if 0 <= choice < len(discovered_devices):
+                return discovered_devices[choice]
+            elif choice == len(discovered_devices):  # User selected Rediscovery option
+                continue
+            else:
+                print("Invalid choice.")
+
+        else:
+            if retry_count < 1:  # Allow one automatic retry
+                print("No HDHomeRun devices found. Retrying in 3 seconds...")
+                time.sleep(3)  # Wait for 3 seconds
+                retry_count += 1  # Increment the retry counter
+                continue
+            else:
+                print("No HDHomeRun devices found after retry. Exiting.")
+                return ""
+
+        # Add an option to rediscover devices
+        retry = input("Would you like to discover devices again? (y/n): ")
+        if retry.lower() != 'y':
+            return ""
 
 
 # Prompt the user to choose a tuner or Auto mode
@@ -131,34 +161,44 @@ def parse_lock_info(scan_results: List[str]) -> List[Dict[str, str]]:
 
 
 # Query the selected tuner or tuners
-def query_tuner(device_id: str, tuner: int) -> List[str]:
-    try:
-        # command = f"hdhomerun_config {device_id} scan {tuner}"
-        command = "hdhomerun_config 192.168.254.18 scan 3"
-        print(f"Querying tuner {tuner} on device {device_id}...")
-        print(f"executing this command with os.open {command}")
+# Modified Query the selected tuner or Auto select tuners
+def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
+    for tuner in tuners:
+        try:
+            # command = "hdhomerun_config 192.168.254.18 scan 3"
+            # command = "hdhomerun_config 10.216.0.18 scan 2"
+            command = f"hdhomerun_config {device_id} scan {tuner}"
+            print(f"Querying tuner {tuner} on device {device_id}...")
+            print(f"executing this command with os.open {command}")
 
-        with os.popen(command) as result_stream:
-            lines = result_stream.readlines()
+            with os.popen(command) as result_stream:
+                lines = result_stream.readlines()
 
-            if "LOCK: none" in lines:
-                print(f"Tuner {tuner} on device {device_id} failed to lock")
-                return []
+                if any("ERROR: resource locked" in line for line in lines):
+                    print(f"Tuner {tuner} on device {device_id} is locked by another resource. Skipping to next tuner.")
+                    continue
 
-            print(f"Query completed for tuner {tuner} on device {device_id}.")
-            return lines
+                if "LOCK: none" in lines:
+                    print(f"Tuner {tuner} on device {device_id} failed to lock")
+                    return []
 
-    except OSError as e:
-        print(f"Error executing command: {e}")
-        return []
+                print(f"Query completed for tuner {tuner} on device {device_id}.")
+                return lines
 
-    except ValueError:
-        print(f"Invalid tuner number: {tuner}")
-        return []
+        except OSError as e:
+            print(f"Error executing command: {e}")
+            return []
 
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return []
+        except ValueError:
+            print(f"Invalid tuner number: {tuner}")
+            return []
+
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return []
+
+    print("All tuners are either locked or failed to lock. Exiting.")
+    return []
 
 
 # Constants for program count
@@ -167,34 +207,50 @@ MAX_PROGRAM = 20
 
 # Main program
 if __name__ == "__main__":
+    USE_LOCAL_TEST_FILE = False  # Set this to True for local testing, otherwise False
+
+    # Get system name
+    system_name = platform.node()
+
+    # Get current date and time
+    current_datetime = datetime.now()
+    date_str = current_datetime.strftime("%Y%m%d")
+    hour_str = current_datetime.strftime("%H")
+
+    # Generate filename
+    filename = f"{system_name}_{date_str}_{hour_str}.CSV"
+
     try:
         # Use 'with' for better resource management
-        with open('output.csv', 'w', newline='') as output_file:
+        with open(filename, 'w', newline='') as output_file:
             output_writer = csv.writer(output_file)
 
-            # Discover HDHomeRun devices
-            devices = discover_devices()
+            if not USE_LOCAL_TEST_FILE:
+                # Select the HDHomeRun Device
+                selected_device = select_device()
 
-            if not devices:
-                print("No HDHomeRun devices found.")
-                exit()
+                if not selected_device:
+                    print("Exiting the program.")
+                    exit()
 
-            # Select the HDHomeRun Device
-            selected_device = select_device(devices)
+                # Extract the 8-digit device number from the selected device
+                device_number = selected_device.split()[2]
 
-            if not selected_device:
-                exit()
+                # Select a tuner or Auto mode
+                mode = select_tuner_mode()
+                if mode == -1:
+                    exit()
 
-            # Extract the 8-digit device number from the selected device
-            device_number = selected_device.split()[2]
+                # Set list of tuners based on selected mode
+                tuners = [mode] if mode != 4 else [0, 1, 2, 3]
 
-            # Select a tuner or Auto mode
-            mode = select_tuner_mode()
-            if mode == -1:
-                exit()
+                # Query the selected tuner(s), return all scan frequency info from HDHR
+                results = query_tuner(device_number, tuners)
 
-            # Query the selected tuner, return all scan frequency info from HDHR
-            results = query_tuner(device_number, mode)
+            else:
+                # Load from a local test file
+                with open('ScanData.txt', 'r') as result_file:
+                    results = result_file.readlines()
 
             # Parse the results
             print("Parsing Scan Results")
