@@ -1,5 +1,5 @@
 # HD Homerun Scan Channels and produce a CSV file of discovered programs
-# Version 2.1 2023-09-25 Mark Munger
+# Version 2.2 2023-09-25 Mark Munger
 
 import os
 import csv
@@ -8,6 +8,13 @@ import time
 from datetime import datetime
 import platform
 from typing import List, Dict
+import openai
+
+USE_LOCAL_TEST_FILE = True  # True for local testing with ScanData.txt, otherwise False
+
+# Constants for discovered program count from HDHR
+MIN_PROGRAM = 1
+MAX_PROGRAM = 20
 
 # Check hdhomerun_config before anything else
 # if not os.path.exists("hdhomerun_config"):
@@ -199,13 +206,47 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     return []
 
 
-# Constants for discovered program count from HDHR
-MIN_PROGRAM = 1
-MAX_PROGRAM = 20
+def prepare_openai_prompt(filename: str) -> str:
+    try:
+        with open(filename, 'r') as file:
+            file_content = file.read()
+    except FileNotFoundError:
+        print(f"File {filename} not found.")
+        return ""
+
+    prompt = "What city or region is this broadcast TV tuner scan data from. Respond with City and State only"
+
+    # Combine the prompt and the file content
+    full_scan_text = re.sub('[^a-zA-Z]', ' ', file_content)
+    full_text = f"{prompt}\n{full_scan_text}"
+
+    return full_text
+
+
+def get_openai_response(prompt: str) -> str:
+    # Read the API key from environment variable
+    api_key = os.environ.get("OPENAI_API_KEY")
+
+    if api_key is None:
+        print("API key not found in environment variables.")
+        return ""
+
+    openai.api_key = api_key
+
+    try:
+        response = openai.Completion.create(
+            engine="gpt-3.5-turbo-instruct",
+            prompt=prompt,
+            max_tokens=60
+        )
+        return response.choices[0].text.strip()
+    except Exception as error:
+        print(f"An error occurred: {error}")
+        return ""
+
 
 # Main program
 if __name__ == "__main__":
-    USE_LOCAL_TEST_FILE = False  # True for local testing with ScanData.txt, otherwise False
 
     # Get system name
     system_name = platform.node()
@@ -288,10 +329,23 @@ if __name__ == "__main__":
 
                 output_writer.writerow(row)
 
-            print("Data successfully written to 'output.csv'.")
+            print(f"Data successfully written to {filename}")
 
     except Exception as general_error:  # Will add specific exceptions in future
         print(f"An error occurred: {general_error}")
 
-    # Close the CSV file
-    output_file.close()
+    # Ask the user if they want to send the scan results to OpenAI
+    user_response = input("Send results to OpenAI to determine the city/region? (1 for yes / 2 for no): ")
+
+    # If 1 (yes) then prepare the prompt prepending the question to the data and send to openai
+    if user_response == '1':
+        full_text = prepare_openai_prompt(filename)
+        openai_response = get_openai_response(full_text)
+        if openai_response:
+            print(f"The city or region is {openai_response}")
+        else:
+            print("Could not get a response from OpenAI.")
+    elif user_response == '2':
+        print("Not sending data to OpenAI.")
+    else:
+        print("Invalid input. Please respond with '1' for yes or '2' for no.")
