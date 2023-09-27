@@ -10,7 +10,7 @@ import platform
 from typing import List, Dict
 import openai
 
-USE_LOCAL_TEST_FILE = True  # True for local testing with ScanData.txt, otherwise False
+USE_LOCAL_TEST_FILE = False  # True for local testing with ScanData.txt, otherwise False
 
 # Constants for discovered program count from HDHR
 MIN_PROGRAM = 1
