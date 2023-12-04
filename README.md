@@ -3,13 +3,15 @@
 
 ## Overview
 
-This Python script serves as a utility for discovering and scanning channels on SiliconDust HDHomeRun devices. HDHomeRun devices are network-attached TV tuners that allow users to receive over-the-air (OTA) video signals from local broadcast stations. This utility provides a user-friendly interface to identify HDHomeRun devices on your network, select a specific tuner, and then scan for available channels. The results of the scan are saved in a CSV file for further analysis.
+This Python script serves as a utility for discovering and scanning channels on SiliconDust HDHomeRun devices. HDHomeRun devices are network-attached TV tuners that allow users to receive over-the-air (OTA) video signals from local broadcast stations. This utility provides a user-friendly interface to identify HDHomeRun devices on your network, select a specific tuner, and then scan for available channels. The results of the scan are saved in a CSV file for further analysis. OpenAI queries added to provide information about local DMA and Program info.
 
 ### Requirements
 
 •	Python 3.x
 •	SiliconDust HDHomeRun device
 •	hdhomerun_config utility installed
+•	* Optional OpenAI API access
+
 
 ### Features
 1.	Device Discovery: Automatically finds HDHomeRun devices on your network.
