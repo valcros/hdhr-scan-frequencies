@@ -16,6 +16,7 @@ from pathlib import Path
 import platform
 from typing import List, Dict, Optional, Tuple
 import openai
+import json
 
 # Version information
 VERSION = "3.0"
@@ -31,6 +32,22 @@ MAX_PROGRAM = 20
 # Signal quality validation ranges
 MIN_SIGNAL_QUALITY = 0
 MAX_SIGNAL_QUALITY = 100
+
+# Configuration file location
+CONFIG_FILE = Path.home() / ".hdhr_scanner_config.json"
+
+# Default configuration
+DEFAULT_CONFIG = {
+    "device_id": None,
+    "tuner": None,
+    "output_directory": None,
+    "auto_openai": False,
+    "quiet": False,
+    "debug": False,
+    "save_csv": True,
+    "last_device_id": None,
+    "last_tuner": None
+}
 
 
 # Custom Exception Classes
@@ -1043,6 +1060,223 @@ def show_glossary():
     print("="*80 + "\n")
 
 
+def load_config() -> Dict:
+    """
+    Load configuration from file, or return defaults if not found.
+
+    Returns:
+        dict: Configuration dictionary with user preferences.
+    """
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                logger.info(f"Loaded configuration from {CONFIG_FILE}")
+                # Merge with defaults to handle new config keys
+                merged_config = DEFAULT_CONFIG.copy()
+                merged_config.update(config)
+                return merged_config
+        else:
+            logger.info("No configuration file found, using defaults")
+            return DEFAULT_CONFIG.copy()
+    except Exception as e:
+        logger.warning(f"Error loading config file: {e}, using defaults")
+        return DEFAULT_CONFIG.copy()
+
+
+def save_config(config: Dict) -> bool:
+    """
+    Save configuration to file.
+
+    Args:
+        config (dict): Configuration dictionary to save.
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        logger.info(f"Saved configuration to {CONFIG_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving config file: {e}")
+        return False
+
+
+def show_config(config: Dict):
+    """
+    Display current configuration in a readable format.
+
+    Args:
+        config (dict): Configuration dictionary to display.
+    """
+    print("\n" + "="*80)
+    print("  ⚙️  CURRENT CONFIGURATION")
+    print("="*80)
+    print()
+    print(f"Configuration file: {CONFIG_FILE}")
+    print()
+    print("DEFAULTS (used when flags not specified):")
+    print()
+    print(f"  Device ID:        {config.get('device_id') or '(not set - will prompt)'}")
+    print(f"  Tuner:            {config.get('tuner') if config.get('tuner') is not None else '(not set - will prompt)'}")
+    print(f"  Output Directory: {config.get('output_directory') or '(current directory)'}")
+    print(f"  Auto OpenAI:      {config.get('auto_openai')}")
+    print(f"  Quiet Mode:       {config.get('quiet')}")
+    print(f"  Debug Mode:       {config.get('debug')}")
+    print(f"  Save CSV:         {config.get('save_csv')}")
+    print()
+    print("LAST USED:")
+    print()
+    print(f"  Last Device ID:   {config.get('last_device_id') or '(none)'}")
+    print(f"  Last Tuner:       {config.get('last_tuner') if config.get('last_tuner') is not None else '(none)'}")
+    print()
+    print("NOTE: Command-line flags override configuration file settings")
+    print("="*80 + "\n")
+
+
+def edit_config_interactive():
+    """
+    Interactive configuration editor.
+
+    Allows user to modify and save configuration settings.
+    """
+    config = load_config()
+
+    print("\n" + "="*80)
+    print("  ⚙️  CONFIGURATION EDITOR")
+    print("="*80)
+    print()
+    print("Edit your default preferences. Press Enter to keep current value.")
+    print()
+
+    # Device ID
+    current = config.get('device_id') or '(not set)'
+    new_value = input(f"Default Device ID [{current}]: ").strip()
+    if new_value:
+        if new_value.lower() == 'none':
+            config['device_id'] = None
+        else:
+            config['device_id'] = new_value
+
+    # Tuner
+    current = config.get('tuner') if config.get('tuner') is not None else '(not set)'
+    new_value = input(f"Default Tuner (0-3 or 'none') [{current}]: ").strip()
+    if new_value:
+        if new_value.lower() == 'none':
+            config['tuner'] = None
+        elif new_value.isdigit() and 0 <= int(new_value) <= 3:
+            config['tuner'] = int(new_value)
+        else:
+            print("  Invalid tuner (must be 0-3 or 'none'), keeping current value")
+
+    # Output Directory
+    current = config.get('output_directory') or '(current directory)'
+    new_value = input(f"Default Output Directory [{current}]: ").strip()
+    if new_value:
+        if new_value.lower() == 'none':
+            config['output_directory'] = None
+        else:
+            # Expand ~ to home directory
+            expanded_path = os.path.expanduser(new_value)
+            if os.path.isdir(expanded_path):
+                config['output_directory'] = expanded_path
+            else:
+                print(f"  Warning: Directory '{expanded_path}' does not exist")
+                create = input("  Create it? (y/n): ").strip().lower()
+                if create == 'y':
+                    try:
+                        os.makedirs(expanded_path, exist_ok=True)
+                        config['output_directory'] = expanded_path
+                        print(f"  Created directory: {expanded_path}")
+                    except Exception as e:
+                        print(f"  Error creating directory: {e}")
+                        print("  Keeping current value")
+
+    # Boolean settings
+    print()
+    print("BOOLEAN SETTINGS (y/n):")
+    print()
+
+    # Auto OpenAI
+    current = 'y' if config.get('auto_openai') else 'n'
+    new_value = input(f"Auto query OpenAI? [{current}]: ").strip().lower()
+    if new_value in ['y', 'yes']:
+        config['auto_openai'] = True
+    elif new_value in ['n', 'no']:
+        config['auto_openai'] = False
+
+    # Quiet Mode
+    current = 'y' if config.get('quiet') else 'n'
+    new_value = input(f"Quiet mode by default? [{current}]: ").strip().lower()
+    if new_value in ['y', 'yes']:
+        config['quiet'] = True
+    elif new_value in ['n', 'no']:
+        config['quiet'] = False
+
+    # Debug Mode
+    current = 'y' if config.get('debug') else 'n'
+    new_value = input(f"Debug mode by default? [{current}]: ").strip().lower()
+    if new_value in ['y', 'yes']:
+        config['debug'] = True
+    elif new_value in ['n', 'no']:
+        config['debug'] = False
+
+    # Save CSV
+    current = 'y' if config.get('save_csv') else 'n'
+    new_value = input(f"Save to CSV by default? [{current}]: ").strip().lower()
+    if new_value in ['y', 'yes']:
+        config['save_csv'] = True
+    elif new_value in ['n', 'no']:
+        config['save_csv'] = False
+
+    # Save configuration
+    print()
+    print("="*80)
+    save = input("Save this configuration? (y/n): ").strip().lower()
+    if save == 'y':
+        if save_config(config):
+            print(f"✅ Configuration saved to: {CONFIG_FILE}")
+        else:
+            print("❌ Error saving configuration file")
+    else:
+        print("Configuration not saved")
+
+    print("="*80 + "\n")
+
+
+def reset_config():
+    """
+    Reset configuration to defaults.
+
+    Deletes the configuration file and confirms reset.
+    """
+    print("\n" + "="*80)
+    print("  ⚠️  RESET CONFIGURATION")
+    print("="*80)
+    print()
+    print("This will reset all settings to defaults and delete:")
+    print(f"  {CONFIG_FILE}")
+    print()
+
+    confirm = input("Are you sure? (yes/no): ").strip().lower()
+    if confirm == 'yes':
+        try:
+            if CONFIG_FILE.exists():
+                CONFIG_FILE.unlink()
+                logger.info("Configuration file deleted")
+            print("✅ Configuration reset to defaults")
+            print("   (Settings will be recreated on next run)")
+        except Exception as e:
+            logger.error(f"Error deleting config file: {e}")
+            print(f"❌ Error resetting configuration: {e}")
+    else:
+        print("Reset cancelled")
+
+    print("="*80 + "\n")
+
+
 def show_welcome_screen():
     """
     Display welcome screen for first-time users.
@@ -1127,6 +1361,15 @@ Examples:
                        help='Show program version and exit')
     parser.add_argument('--glossary', action='store_true',
                        help='Show technical glossary explaining scan terms and exit')
+
+    # Configuration management flags
+    parser.add_argument('--show-config', action='store_true',
+                       help='Show current configuration and exit')
+    parser.add_argument('--edit-config', action='store_true',
+                       help='Edit configuration interactively and exit')
+    parser.add_argument('--reset-config', action='store_true',
+                       help='Reset configuration to defaults and exit')
+
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     parser.add_argument('--test-file', dest='use_test_file', action='store_true',
@@ -1150,10 +1393,52 @@ Examples:
 
     args = parser.parse_args()
 
+    # Handle configuration management flags (before loading config)
+    if args.show_config:
+        config = load_config()
+        show_config(config)
+        return 0
+
+    if args.edit_config:
+        edit_config_interactive()
+        return 0
+
+    if args.reset_config:
+        reset_config()
+        return 0
+
     # Handle --glossary (show glossary and exit)
     if args.glossary:
         show_glossary()
         return 0
+
+    # Load configuration file
+    config = load_config()
+
+    # Apply configuration defaults (command-line args override config)
+    if not args.device_id and config.get('device_id'):
+        args.device_id = config['device_id']
+        logger.debug(f"Using device_id from config: {args.device_id}")
+
+    if args.tuner is None and config.get('tuner') is not None:
+        args.tuner = config['tuner']
+        logger.debug(f"Using tuner from config: {args.tuner}")
+
+    if not args.debug and config.get('debug'):
+        args.debug = True
+        logger.debug("Debug mode enabled from config")
+
+    if not args.quiet and config.get('quiet'):
+        args.quiet = True
+        logger.debug("Quiet mode enabled from config")
+
+    if not args.auto_openai and config.get('auto_openai'):
+        args.auto_openai = True
+        logger.debug("Auto OpenAI enabled from config")
+
+    if not args.no_save and not config.get('save_csv'):
+        args.no_save = True
+        logger.debug("Save CSV disabled from config")
 
     # Handle --verbose (implies --debug)
     if args.verbose:
@@ -1205,7 +1490,14 @@ Examples:
                 print(f"   Please use a shorter filename with --output")
                 return 1
         else:
+            # Use default filename
             filename = f"{system_name}_{date_str}_{hour_str}.csv"
+
+            # Apply output directory from config if set
+            if config.get('output_directory'):
+                output_dir = config['output_directory']
+                filename = os.path.join(output_dir, filename)
+                logger.info(f"Using output directory from config: {output_dir}")
 
         logger.info(f"Output filename: {filename}")
 
@@ -1537,6 +1829,16 @@ Examples:
             else:
                 logger.warning("No results available for OpenAI query")
                 print("No results available to send to OpenAI.")
+
+        # Save last used device/tuner to config for future convenience
+        if not args.use_test_file:
+            try:
+                config['last_device_id'] = device_number
+                config['last_tuner'] = mode if mode != 4 else None  # Don't save AUTO mode
+                save_config(config)
+                logger.info(f"Saved last used device ({device_number}) and tuner ({mode}) to config")
+            except Exception as e:
+                logger.warning(f"Could not save last used values to config: {e}")
 
         logger.info("Program completed successfully")
         print("\nScan completed successfully!")
