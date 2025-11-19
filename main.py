@@ -634,6 +634,8 @@ def query_tuner(device_id: str, tuners: List[int], quiet: bool = False) -> List[
             scan_count = 0
             lock_count = 0
             current_channel = ""
+            start_time = time.time()
+            last_eta_update = start_time
 
             # Read output line by line for real-time progress
             try:
@@ -651,9 +653,34 @@ def query_tuner(device_id: str, tuners: List[int], quiet: bool = False) -> List[
                         if match:
                             current_channel = match.group(2)
                             scan_count += 1
-                            # Update on same line for cleaner output
+
+                            # Calculate ETA (update every 5 scans to avoid too much flicker)
                             if not quiet:
-                                print(f"\r   Scanning: Channel {current_channel} ({scan_count} frequencies checked)     ", end='', flush=True)
+                                current_time = time.time()
+                                elapsed = current_time - start_time
+
+                                # Start showing ETA after 10 scans for better accuracy
+                                if scan_count >= 10 and (current_time - last_eta_update) >= 5:
+                                    # Typical scan is ~65 frequencies
+                                    estimated_total = 65
+                                    rate = scan_count / elapsed if elapsed > 0 else 0
+
+                                    if rate > 0:
+                                        remaining_scans = estimated_total - scan_count
+                                        eta_seconds = remaining_scans / rate
+                                        eta_minutes = int(eta_seconds / 60)
+                                        eta_secs = int(eta_seconds % 60)
+
+                                        progress_pct = min(int((scan_count / estimated_total) * 100), 99)
+                                        eta_str = f" | ETA: {eta_minutes}m {eta_secs}s ({progress_pct}%)"
+                                        last_eta_update = current_time
+                                    else:
+                                        eta_str = ""
+                                else:
+                                    eta_str = ""
+
+                                # Update on same line for cleaner output
+                                print(f"\r   Scanning: Channel {current_channel} ({scan_count} frequencies){eta_str}     ", end='', flush=True)
 
                     elif line.startswith('LOCK:') and 'none' not in line:
                         lock_count += 1
@@ -692,9 +719,15 @@ def query_tuner(device_id: str, tuners: List[int], quiet: bool = False) -> List[
             logger.info(f"Scanned {scan_count} frequencies, locked {lock_count}")
 
             if not quiet:
+                # Calculate and show total scan time
+                total_time = time.time() - start_time
+                total_minutes = int(total_time / 60)
+                total_seconds = int(total_time % 60)
+
                 print(f"\n")
                 print(f"   ✅ Scan completed for tuner {tuner}!")
                 print(f"   📊 Results: {scan_count} frequencies scanned, {lock_count} channels found")
+                print(f"   ⏱️  Duration: {total_minutes}m {total_seconds}s")
                 print()
 
             return lines
@@ -926,6 +959,90 @@ def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
             return False
 
 
+def show_glossary():
+    """
+    Display technical glossary explaining terms used in scan results.
+
+    Helps users understand signal measurements and channel scan terminology.
+    """
+    print("\n" + "="*80)
+    print("  📖 TECHNICAL GLOSSARY")
+    print("="*80)
+    print()
+    print("CHANNEL & FREQUENCY TERMS:")
+    print()
+    print("  • US-Bcast Channel")
+    print("    The logical channel number (e.g., Channel 7)")
+    print("    What appears on your TV when tuning channels")
+    print()
+    print("  • Frequency")
+    print("    The actual radio frequency in Hz (e.g., 177000000 = 177 MHz)")
+    print("    Physical RF channel carrying the broadcast")
+    print()
+    print("  • TSID (Transport Stream ID)")
+    print("    Unique identifier for the broadcast stream")
+    print("    Used to distinguish different broadcasters")
+    print()
+    print("SIGNAL QUALITY MEASUREMENTS:")
+    print()
+    print("  • Lock Status")
+    print("    Modulation type when signal acquired (8vsb, qam256, etc.)")
+    print("    'none' = No signal found on this frequency")
+    print("    '8vsb' = Standard ATSC 1.0 broadcast (most OTA channels)")
+    print()
+    print("  • Signal Strength (dBmV)")
+    print("    Power level of the received signal")
+    print("    🌟 Excellent: >15 dBmV - Perfect reception, no issues")
+    print("    ✅ Strong: 10-15 dBmV - Great reception")
+    print("    ✅ Good: 0-10 dBmV - Reliable, suitable for viewing")
+    print("    ⚠️  Weak: 0 to -10 dBmV - May have issues, adjust antenna")
+    print("    ❌ Very Weak: <-10 dBmV - Unreliable, likely won't work")
+    print()
+    print("  • SNQ (Signal to Noise Quality) %")
+    print("    Ratio of signal to background noise")
+    print("    100% = Perfect, no noise interference")
+    print("    <50% = Too much noise, reception problems likely")
+    print("    Affected by: electrical interference, weak signals, obstacles")
+    print()
+    print("  • SEQ (Symbol Error Quality) %")
+    print("    Accuracy of received digital symbols")
+    print("    100% = Perfect, no errors in digital data")
+    print("    <90% = Too many errors, may cause pixelation/dropouts")
+    print("    Affected by: multipath interference, weak signals")
+    print()
+    print("PROGRAM INFORMATION:")
+    print()
+    print("  • Program / Station")
+    print("    Individual broadcast channels within a frequency")
+    print("    One RF channel can carry multiple programs (subchannels)")
+    print("    Example: Channel 7.1 (main), 7.2 (weather), 7.3 (news)")
+    print()
+    print("COMMON TERMS:")
+    print()
+    print("  • OTA (Over-The-Air)")
+    print("    Free broadcast TV signals transmitted through the air")
+    print("    Received with an antenna, no subscription required")
+    print()
+    print("  • HDHomeRun")
+    print("    Network-attached TV tuner device")
+    print("    Allows multiple devices to watch/record OTA TV")
+    print()
+    print("  • Tuner")
+    print("    Hardware component that receives and decodes TV signals")
+    print("    HDHomeRun devices typically have 2-4 tuners")
+    print()
+    print("TROUBLESHOOTING:")
+    print()
+    print("  Low Signal Strength: Reorient antenna, increase height, reduce obstacles")
+    print("  Low SNQ: Reduce electrical interference, move antenna away from electronics")
+    print("  Low SEQ: Check for multipath (signal bouncing), adjust antenna direction")
+    print()
+    print("RESOURCES:")
+    print("  • FCC Coverage Map: https://www.fcc.gov/media/engineering/dtvmaps")
+    print("  • HDHomeRun Support: https://www.silicondust.com/support/")
+    print("="*80 + "\n")
+
+
 def show_welcome_screen():
     """
     Display welcome screen for first-time users.
@@ -1008,6 +1125,8 @@ Examples:
     parser.add_argument('--version', action='version',
                        version=f'%(prog)s {VERSION} ({VERSION_DATE})',
                        help='Show program version and exit')
+    parser.add_argument('--glossary', action='store_true',
+                       help='Show technical glossary explaining scan terms and exit')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     parser.add_argument('--test-file', dest='use_test_file', action='store_true',
@@ -1030,6 +1149,11 @@ Examples:
                        help='Verbose mode: show detailed operation info (implies --debug)')
 
     args = parser.parse_args()
+
+    # Handle --glossary (show glossary and exit)
+    if args.glossary:
+        show_glossary()
+        return 0
 
     # Handle --verbose (implies --debug)
     if args.verbose:
