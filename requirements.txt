@@ -1,0 +1,11 @@
+# HDHomeRun Channel Scanner - Python Dependencies
+# Version 3.0
+# Last updated: 2025-11-19
+
+# Core dependency (optional, for AI-powered location identification)
+openai>=1.0.0
+
+# Note: All other dependencies are Python standard library modules
+# Standard library modules used (no installation required):
+# - os, csv, re, time, sys, shutil, argparse, subprocess
+# - logging, datetime, pathlib, platform, typing, json

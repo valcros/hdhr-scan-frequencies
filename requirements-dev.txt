@@ -1,0 +1,20 @@
+# HDHomeRun Channel Scanner - Development Dependencies
+# Version 3.0
+# Last updated: 2025-11-19
+
+# Include production requirements
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Code quality
+pylint>=2.15.0
+flake8>=6.0.0
+black>=23.0.0
+mypy>=1.0.0
+
+# Development tools
+ipython>=8.0.0

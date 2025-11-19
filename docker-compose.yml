@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  hdhr-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hdhr-scanner:3.0
+    container_name: hdhr-scanner
+
+    # Network mode: host required for HDHomeRun device discovery
+    network_mode: host
+
+    # Environment variables
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TZ=${TZ:-UTC}
+
+    # Volumes for persistent data
+    volumes:
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ~/.hdhr_scanner_config.json:/home/hdhr/.hdhr_scanner_config.json
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Default command (override with docker-compose run)
+    command: ["python3", "main.py", "--help"]
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Example usage:
+#
+# 1. Build and start:
+#    docker-compose up --build
+#
+# 2. Run interactive scan:
+#    docker-compose run --rm hdhr-scanner python3 main.py
+#
+# 3. Run automated scan:
+#    docker-compose run --rm hdhr-scanner python3 main.py \
+#      --device-id 12345678 --tuner 0 --quiet -o /app/output/scan.csv
+#
+# 4. Show configuration:
+#    docker-compose run --rm hdhr-scanner python3 main.py --show-config
+#
+# 5. Edit configuration:
+#    docker-compose run --rm hdhr-scanner python3 main.py --edit-config

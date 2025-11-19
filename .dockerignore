@@ -1,0 +1,54 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation and audit files (not needed in container)
+UX_AUDIT_*.md
+USER_JOURNEY_AUDIT_PROMPT.md
+CHANGELOG.md
+
+# Sample and test data
+Sample_output.txt
+ScanData.txt
+test_main.py
+
+# Logs and output (generated at runtime)
+*.log
+*.csv
+*.json
+output/
+logs/
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Development dependencies
+requirements-dev.txt

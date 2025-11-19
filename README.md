@@ -143,7 +143,9 @@ python3 main.py [OPTIONS]
 | `--test-file` | Use local `ScanData.txt` file instead of scanning device |
 | `--no-save` | Skip CSV file creation (display results only) |
 | `--auto-openai` | Automatically query OpenAI without prompting |
-| `--output FILE`, `-o FILE` | Specify custom output CSV filename |
+| `--output FILE`, `-o FILE` | Specify custom output filename (CSV or JSON) |
+| `--format {csv,json}` | Output format: csv (default) or json |
+| `--json` | Output in JSON format (shorthand for --format json) |
 | `--device-id ID` | Specify HDHomeRun device ID to skip device selection |
 | `--tuner N` | Specify tuner number (0-3) to skip tuner selection |
 
@@ -189,6 +191,15 @@ python3 main.py --edit-config
 
 # Reset configuration to defaults
 python3 main.py --reset-config
+```
+
+**JSON output format:**
+```bash
+# Export as JSON
+python3 main.py --json -o scan.json
+
+# Or explicitly specify format
+python3 main.py --format json -o scan.json
 ```
 
 ## Configuration File
@@ -578,7 +589,15 @@ Explains: dBmV, SNQ, SEQ, 8vsb, TSID, subchannels, and more. Perfect for first-t
 ### Data Questions
 
 **Q: Can I export results in JSON format?**
-A: Not yet, but it's on the roadmap (Sprint 4). Currently supports CSV only.
+A: Yes! Use the `--json` flag or `--format json`:
+```bash
+# JSON output
+python3 main.py --json -o scan.json
+
+# Or explicitly specify format
+python3 main.py --format json -o scan.json
+```
+JSON output includes scan metadata and cleaner program arrays.
 
 **Q: How do I open the CSV file?**
 A: Any spreadsheet app:
@@ -772,6 +791,179 @@ The script returns standard exit codes:
 ### Version 2.1
 - Bug fixes and code cleanup
 - Added sample test file
+
+## DevOps & Production Deployment
+
+### Quick Installation
+
+The fastest way to install HDHomeRun Scanner in production:
+
+```bash
+# Download and run installation script
+curl -fsSL https://raw.githubusercontent.com/yourusername/hdhr-scan-frequencies/main/install.sh | sudo bash
+
+# Or clone and install
+git clone https://github.com/yourusername/hdhr-scan-frequencies.git
+cd hdhr-scan-frequencies
+sudo bash install.sh
+
+# Start using the scanner
+hdhr-scan --help
+```
+
+The installation script automatically:
+- Installs Python 3 and dependencies
+- Downloads and compiles `hdhomerun_config` utility
+- Creates service user and directories
+- Sets up systemd service (Linux)
+- Configures firewall rules
+- Creates command-line wrapper
+
+### Deployment Methods
+
+#### 1. Docker Deployment (Recommended)
+
+**Build and run with Docker:**
+```bash
+# Build image
+docker build -t hdhr-scanner:3.0 .
+
+# Run interactively
+docker run --rm -it --network host \
+  -v $(pwd)/output:/app/output \
+  hdhr-scanner:3.0 python3 main.py
+
+# Run automated scan
+docker run --rm --network host \
+  -v $(pwd)/output:/app/output \
+  hdhr-scanner:3.0 python3 main.py \
+  --device-id 12345678 --tuner 0 --quiet -o /app/output/scan.csv
+```
+
+**Using Docker Compose:**
+```bash
+# Start services
+docker-compose up -d
+
+# Run scan
+docker-compose run --rm hdhr-scanner python3 main.py
+
+# View configuration
+docker-compose run --rm hdhr-scanner python3 main.py --show-config
+```
+
+#### 2. Native Installation
+
+See `DEPLOYMENT.md` for comprehensive native installation instructions for:
+- Ubuntu/Debian
+- RHEL/CentOS/Fedora
+- macOS
+- Windows
+
+#### 3. Virtual Environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+### Production Features
+
+#### Configuration Management
+```bash
+# View current configuration
+hdhr-scan --show-config
+
+# Edit configuration interactively
+hdhr-scan --edit-config
+
+# Reset to defaults
+hdhr-scan --reset-config
+```
+
+Configuration file: `~/.hdhr_scanner_config.json`
+
+#### Automation & Scheduling
+
+**Cron job (daily at 3 AM):**
+```bash
+0 3 * * * hdhr-scan --device-id 12345678 --tuner 0 --quiet -o /var/hdhr/scans/scan_$(date +\%Y\%m\%d).csv
+```
+
+**systemd timer:**
+```bash
+# Enable timer
+sudo systemctl enable hdhr-scanner.timer
+sudo systemctl start hdhr-scanner.timer
+
+# Check status
+sudo systemctl status hdhr-scanner.timer
+```
+
+#### Monitoring & Logging
+
+- **Log file:** `hdhr_scan.log`
+- **Log rotation:** Automatic (5 MB × 5 files = 25 MB total)
+- **Log levels:** INFO (default), DEBUG (`--debug` flag), WARNING, ERROR
+
+**Monitor logs:**
+```bash
+# Tail logs
+tail -f hdhr_scan.log
+
+# Search for errors
+grep ERROR hdhr_scan.log
+
+# Today's activity
+grep "$(date +%Y-%m-%d)" hdhr_scan.log
+```
+
+### Dependencies
+
+#### Python Packages
+See `requirements.txt`:
+- **openai** (optional) - For AI-powered location identification
+
+All other dependencies are Python standard library.
+
+#### System Requirements
+- **Python:** 3.7+ (3.11+ recommended)
+- **hdhomerun_config:** Latest from [SiliconDust](https://www.silicondust.com/support/downloads/)
+- **Network:** UDP port 65001 for device discovery
+
+### CI/CD Pipeline
+
+GitHub Actions workflow included (`.github/workflows/ci.yml`):
+- **Linting:** flake8, black, mypy
+- **Testing:** pytest on Python 3.7-3.11, Ubuntu & macOS
+- **Security:** safety, bandit, Trivy
+- **Docker:** Build, test, and publish images
+- **Release:** Automatic artifact creation and Docker publishing
+
+### Documentation
+
+- **README.md** - User guide and feature documentation (this file)
+- **ERROR_REFERENCE.md** - Comprehensive error reference
+- **DEPLOYMENT.md** - Complete DevOps deployment guide
+- **CHANGELOG.md** - Version history and changes
+
+### Security
+
+- Non-root user execution (Docker & systemd)
+- Configuration file permissions (600)
+- Firewall rules for HDHomeRun discovery
+- API key management via environment variables
+- No hardcoded credentials
+- Security scanning in CI/CD pipeline
+
+### Support Resources
+
+**For production deployments, see:**
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Comprehensive deployment guide
+- [ERROR_REFERENCE.md](ERROR_REFERENCE.md) - Error troubleshooting
+- Production considerations, monitoring, automation, security best practices
 
 ## Contributing
 
