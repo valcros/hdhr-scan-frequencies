@@ -131,12 +131,18 @@ python3 main.py [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
+| `--help`, `-h` | Show help message and exit |
+| `--version` | Show program version and exit |
+| `--glossary` | Show technical glossary explaining scan terms and exit |
 | `--debug` | Enable debug logging for detailed troubleshooting |
+| `--verbose`, `-v` | Verbose mode with detailed operation info (implies --debug) |
+| `--quiet`, `-q` | Quiet mode: suppress progress output (for automation/scripts) |
 | `--test-file` | Use local `ScanData.txt` file instead of scanning device |
 | `--no-save` | Skip CSV file creation (display results only) |
 | `--auto-openai` | Automatically query OpenAI without prompting |
 | `--output FILE`, `-o FILE` | Specify custom output CSV filename |
-| `--help`, `-h` | Show help message and exit |
+| `--device-id ID` | Specify HDHomeRun device ID to skip device selection |
+| `--tuner N` | Specify tuner number (0-3) to skip tuner selection |
 
 ### Usage Examples
 
@@ -162,8 +168,346 @@ python3 main.py --no-save
 
 **Full automation for scripting:**
 ```bash
-python3 main.py --output scan.csv --auto-openai --debug
+python3 main.py --device-id 12345678 --tuner 0 --quiet --output scan.csv
 ```
+
+**View technical glossary:**
+```bash
+python3 main.py --glossary
+```
+
+## User Tutorial
+
+### First-Time Setup
+
+1. **Install Prerequisites**
+   ```bash
+   # Install HDHomeRun utility (Linux example)
+   sudo apt-get install hdhomerun-config
+
+   # Verify installation
+   hdhomerun_config discover
+   ```
+
+2. **Clone and Test**
+   ```bash
+   git clone <repository-url>
+   cd hdhr-scan-frequencies
+   python3 main.py --help
+   ```
+
+3. **First Scan (Interactive)**
+   ```bash
+   python3 main.py
+   ```
+
+   The first time you run it, you'll see a welcome screen explaining:
+   - What the tool does
+   - Requirements
+   - Quick tips
+
+   Then follow the prompts:
+   - Device selection → Choose your HDHomeRun from the list
+   - Tuner selection → Choose a specific tuner (0-3) or AUTO mode
+   - Wait 3-5 minutes → Real-time progress with ETA shown
+   - Save to CSV? → Press Y to save, N to just display
+   - Query OpenAI? → Press N unless you want location detection
+
+### Understanding Your Scan Results
+
+#### Display Mode Output
+
+When you choose not to save (or use `--no-save`), you'll see formatted results like:
+
+```
+[1] Channel 7 (177.000 MHz) ✅ Good
+    Frequency: 177000000 Hz
+    Lock: 8vsb
+    Signal: 5 dBmV  |  SNQ: 100%  |  SEQ: 100%
+    TSID: 1234
+    Programs (3):
+      • 7.1 WABC-HD
+      • 7.2 LiveWell
+      • 7.3 Localish
+```
+
+**What each field means:**
+- **Channel Number**: Logical channel (what appears on your TV)
+- **Frequency**: Physical RF frequency in Hz (also shown in MHz)
+- **Status**: Signal quality indicator
+  - 🌟 Excellent: >15 dBmV
+  - ✅ Strong: 10-15 dBmV
+  - ✅ Good: 0-10 dBmV
+  - ⚠️ Weak: -10 to 0 dBmV
+  - ❌ Very Weak: <-10 dBmV
+- **Lock**: Modulation type (8vsb = standard ATSC broadcast)
+- **Signal**: Power level in dBmV (higher is better)
+- **SNQ**: Signal to Noise Quality (100% = perfect)
+- **SEQ**: Symbol Error Quality (100% = perfect)
+- **TSID**: Transport Stream ID (broadcaster identifier)
+- **Programs**: Subchannels available (7.1, 7.2, 7.3, etc.)
+
+#### Signal Warnings
+
+If you see warnings like:
+
+```
+⚠️  SIGNAL WARNINGS:
+   • Weak channels: Ch 2, Ch 45
+     → Consider repositioning antenna
+
+   HOW TO IMPROVE:
+   1. Reorient antenna (try different directions)
+   2. Raise antenna height if possible
+   ...
+```
+
+These are **actionable recommendations** to improve reception. Follow the numbered steps to fix issues.
+
+#### CSV Output
+
+The CSV file (named `hostname_YYYYMMDD_HH.csv`) contains:
+- All frequency data in spreadsheet-friendly format
+- Perfect for data analysis, tracking changes over time
+- Import into Excel, Google Sheets, or any CSV viewer
+
+### Automation & Scripting
+
+#### Cron Job Example
+
+Scan automatically every day at 3 AM:
+
+```bash
+# Add to crontab (crontab -e)
+0 3 * * * cd /path/to/hdhr-scan-frequencies && python3 main.py --device-id 12345678 --tuner 0 --quiet --output ~/scans/scan_$(date +\%Y\%m\%d).csv
+```
+
+#### Bash Script Example
+
+```bash
+#!/bin/bash
+# scan_channels.sh - Automated channel scanning
+
+DEVICE_ID="12345678"
+OUTPUT_DIR="$HOME/channel_scans"
+mkdir -p "$OUTPUT_DIR"
+
+python3 main.py \
+    --device-id "$DEVICE_ID" \
+    --tuner 0 \
+    --quiet \
+    --output "$OUTPUT_DIR/scan_$(date +%Y%m%d_%H%M).csv"
+
+echo "Scan complete! Check $OUTPUT_DIR"
+```
+
+#### Python Integration Example
+
+```python
+import subprocess
+import json
+
+# Run scan and capture output
+result = subprocess.run(
+    ['python3', 'main.py',
+     '--device-id', '12345678',
+     '--tuner', '0',
+     '--quiet',
+     '--output', 'scan.csv'],
+    capture_output=True,
+    text=True
+)
+
+if result.returncode == 0:
+    print("Scan successful!")
+    # Process scan.csv here
+else:
+    print(f"Scan failed: {result.stderr}")
+```
+
+### Advanced Usage
+
+#### Comparing Scans Over Time
+
+```bash
+# Scan morning
+python3 main.py -o morning_scan.csv
+
+# Scan evening
+python3 main.py -o evening_scan.csv
+
+# Compare results
+diff morning_scan.csv evening_scan.csv
+```
+
+#### Testing Different Antennas
+
+```bash
+# Document which antenna you're testing
+python3 main.py -o antenna_indoor.csv
+# (swap to outdoor antenna)
+python3 main.py -o antenna_outdoor.csv
+```
+
+#### Finding Optimal Antenna Direction
+
+```bash
+# Scan at different directions (note: manual antenna adjustment needed)
+python3 main.py -o north.csv
+# (rotate antenna 90°)
+python3 main.py -o east.csv
+# (rotate antenna 90°)
+python3 main.py -o south.csv
+# (rotate antenna 90°)
+python3 main.py -o west.csv
+```
+
+Compare signal strengths in each CSV to find best direction.
+
+## Frequently Asked Questions (FAQ)
+
+### General Questions
+
+**Q: Do I need an OpenAI API key?**
+A: No, it's optional. The scanner works perfectly without it. OpenAI is only used to identify your broadcast region from station call signs, which is mostly for curiosity. You can skip this feature by pressing 'N' when prompted or use `--no-openai` (implied default).
+
+**Q: How long does a scan take?**
+A: Typically 3-5 minutes. The tool now shows real-time progress with ETA: "Scanning: Channel 7 (25 frequencies) | ETA: 2m 30s (45%)". The first 10 scans establish the baseline, then ETA appears and updates every 5 seconds.
+
+**Q: Can I scan multiple devices?**
+A: Yes! Run the scanner once per device:
+```bash
+python3 main.py --device-id AAAA1111 -o device1.csv
+python3 main.py --device-id BBBB2222 -o device2.csv
+```
+
+**Q: What if I don't know my device ID?**
+A: Just run `python3 main.py` without `--device-id`. It will discover devices and show a menu. Or run: `hdhomerun_config discover` to see all devices.
+
+**Q: Does this work on all HDHomeRun models?**
+A: Yes! Works with all models (Connect, Extend, Flex, etc.) as long as they support the `hdhomerun_config` utility.
+
+### Technical Questions
+
+**Q: What does "8vsb" mean in the Lock field?**
+A: It's the modulation type for ATSC 1.0 broadcasts (standard US over-the-air TV). Use `--glossary` flag for a complete technical glossary.
+
+**Q: My signal strength is negative. Is that bad?**
+A: Not necessarily! Signal strength in dBmV can be negative. The scale:
+- **>15 dBmV**: Excellent
+- **0-15 dBmV**: Good to Strong
+- **0 to -10 dBmV**: Weak but usable
+- **<-10 dBmV**: Very weak, may not work
+
+**Q: What's the difference between SNQ and SEQ?**
+A:
+- **SNQ (Signal to Noise Quality)**: How clean the signal is (interference-free)
+- **SEQ (Symbol Error Quality)**: How accurate the digital data is (error-free)
+
+Both should be >90% for reliable reception.
+
+**Q: Why do some channels show "none" for Lock?**
+A: No broadcast found on that frequency. Either:
+- No station broadcasting there
+- Signal too weak to detect
+- Outside your reception area
+
+**Q: What's a subchannel (like 7.1, 7.2)?**
+A: Digital TV allows multiple programs on one RF channel. 7.1 is the main channel, 7.2/7.3 are additional channels (weather, news, retro shows, etc.). All come from one RF frequency.
+
+### Troubleshooting Questions
+
+**Q: "ERROR: resource locked" - what does this mean?**
+A: Another app is using that tuner (TV viewer, DVR, etc.). Solutions:
+1. Close other apps using HDHomeRun
+2. Try a different tuner (0, 1, 2, or 3)
+3. Use AUTO mode - it tries all tuners automatically
+
+**Q: Scan finds 0 channels. Why?**
+A: Several possibilities:
+1. **No antenna connected** → Connect antenna to HDHomeRun
+2. **Antenna not pointed correctly** → Try rotating it
+3. **Too far from towers** → Check FCC map: https://www.fcc.gov/media/engineering/dtvmaps
+4. **Tuner locked** → Try different tuner or restart HDHomeRun
+
+**Q: My channels have weak signal. How do I fix?**
+A: The tool now shows automatic warnings and recommendations. Common fixes:
+1. Reorient antenna (try all 4 directions)
+2. Raise antenna higher
+3. Move antenna away from metal/electronics
+4. Switch to outdoor antenna
+5. Check antenna is connected properly
+6. Use amplifier if >50 miles from towers
+
+**Q: Can I automate scans with cron?**
+A: Yes! Use `--quiet` mode to suppress interactive prompts:
+```bash
+# Add to crontab
+0 3 * * * cd /path/to/scanner && python3 main.py --device-id 12345678 --tuner 0 -q -o scan.csv
+```
+
+**Q: The welcome screen shows every time. How do I skip it?**
+A: The welcome screen only shows once (marker file: `~/.hdhr_scan_welcomed`). If you want to skip it, use `--quiet` flag or delete the marker to see it again.
+
+**Q: What's the --glossary flag for?**
+A: It shows a comprehensive technical glossary explaining all terms:
+```bash
+python3 main.py --glossary
+```
+Explains: dBmV, SNQ, SEQ, 8vsb, TSID, subchannels, and more. Perfect for first-time users.
+
+### Data Questions
+
+**Q: Can I export results in JSON format?**
+A: Not yet, but it's on the roadmap (Sprint 4). Currently supports CSV only.
+
+**Q: How do I open the CSV file?**
+A: Any spreadsheet app:
+- **Excel**: File → Open → Select CSV
+- **Google Sheets**: File → Import → Upload File
+- **LibreOffice Calc**: Open directly
+- **Command line**: `cat scan.csv` or `less scan.csv`
+
+**Q: The CSV has 20 Program columns but I only have 3 programs. Why?**
+A: The tool reserves space for up to 20 programs per frequency (the maximum possible). Empty columns just mean no program in that slot.
+
+**Q: Can I diff two scans to see what changed?**
+A: Yes!
+```bash
+diff scan1.csv scan2.csv
+# Or for better readability:
+diff -y scan1.csv scan2.csv | less
+```
+
+### Error Questions
+
+**Q: "hdhomerun_config utility not found" - help!**
+A: The tool now shows a comprehensive error message with What/Why/How format. Follow the installation steps:
+1. Download from: https://www.silicondust.com/support/downloads/
+2. Install for your OS
+3. Verify: `hdhomerun_config discover`
+
+**Q: "No HDHomeRun devices found" but my device is on!**
+A: The tool now provides troubleshooting steps automatically. Check:
+1. Device powered on (green LED solid)
+2. Network cable connected
+3. Same network as computer
+4. Firewall allows UDP port 65001
+5. Try: `hdhomerun_config discover` directly
+
+**Q: I get a Python error about "openai module not found"**
+A: OpenAI is optional. Either:
+- Install it: `pip install openai`
+- Or press 'N' when asked about OpenAI query
+- Or use automation mode which skips OpenAI by default
+
+**Q: File permission denied when saving CSV?**
+A: The tool now offers a recovery menu with options:
+1. Try different location
+2. Display results on screen instead
+3. Exit
+
+Choose option 1 and provide a writable path, or use option 2 to see results without saving.
 
 ### Understanding the Output
 
