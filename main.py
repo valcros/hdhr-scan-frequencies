@@ -10,11 +10,16 @@ import shutil
 import argparse
 import subprocess
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
 import platform
 from typing import List, Dict, Optional, Tuple
 import openai
+
+# Version information
+VERSION = "3.0"
+VERSION_DATE = "2025-11-19"
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -51,7 +56,7 @@ class InvalidInputError(Exception):
 
 def setup_logging(debug: bool = False) -> None:
     """
-    Setup logging configuration.
+    Setup logging configuration with log rotation.
 
     Args:
         debug (bool): Enable debug level logging if True.
@@ -64,8 +69,14 @@ def setup_logging(debug: bool = False) -> None:
     console_handler.setLevel(log_level)
     console_handler.setFormatter(logging.Formatter(log_format))
 
-    # File handler
-    file_handler = logging.FileHandler('hdhr_scan.log')
+    # File handler with rotation (5MB max per file, keep 5 backup files)
+    # This prevents unlimited log growth - max ~25MB total
+    file_handler = RotatingFileHandler(
+        'hdhr_scan.log',
+        maxBytes=5*1024*1024,  # 5MB
+        backupCount=5,
+        encoding='utf-8'
+    )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(log_format))
 
@@ -140,6 +151,10 @@ def discover_devices() -> List[str]:
         ['hdhomerun device 12345678 found at 192.168.1.100']
     """
     try:
+        # Provide user feedback before starting
+        print("🔍 Searching for HDHomeRun devices on your network...")
+        print("   (This may take up to 10 seconds)\n")
+
         logger.debug("Attempting to discover HDHomeRun devices")
         result = subprocess.run(
             ["hdhomerun_config", "discover", "-4"],
@@ -160,6 +175,15 @@ def discover_devices() -> List[str]:
                   if dev and "no devices found" not in dev.lower()]
 
         logger.info(f"Discovered {len(devices)} HDHomeRun device(s)")
+
+        # Provide feedback on results
+        if len(devices) == 0:
+            print("   → No devices found\n")
+        elif len(devices) == 1:
+            print(f"   → Found 1 device\n")
+        else:
+            print(f"   → Found {len(devices)} devices\n")
+
         return devices
 
     except subprocess.TimeoutExpired:
@@ -586,46 +610,81 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     for tuner in tuners:
         try:
             logger.info(f"Querying tuner {tuner} on device {device_id}")
-            print(f"\nScanning tuner {tuner} on device {device_id}...")
+            print(f"\n📡 Scanning tuner {tuner} on device {device_id}...")
+            print("   This will take 3-5 minutes. Progress shown below:")
+            print()
 
-            result = subprocess.run(
+            # Use Popen for real-time progress output
+            process = subprocess.Popen(
                 ["hdhomerun_config", device_id, "scan", str(tuner)],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=300,  # 5 minute timeout for scanning
-                check=False
+                bufsize=1
             )
 
-            lines = result.stdout.split('\n')
+            lines = []
+            scan_count = 0
+            lock_count = 0
+            current_channel = ""
+
+            # Read output line by line for real-time progress
+            try:
+                for line in iter(process.stdout.readline, ''):
+                    if not line:
+                        break
+
+                    line = line.strip()
+                    if line:
+                        lines.append(line)
+
+                    # Show progress for each frequency scanned
+                    if line.startswith('SCANNING:'):
+                        match = re.search(r'(\d+) \(us-bcast:(\d+)\)', line)
+                        if match:
+                            current_channel = match.group(2)
+                            scan_count += 1
+                            # Update on same line for cleaner output
+                            print(f"\r   Scanning: Channel {current_channel} ({scan_count} frequencies checked)     ", end='', flush=True)
+
+                    elif line.startswith('LOCK:') and 'none' not in line:
+                        lock_count += 1
+                        # New line for lock success
+                        print(f"\r   ✅ Locked: Channel {current_channel} (Total locks: {lock_count})             ")
+
+                # Wait for process to complete
+                process.wait(timeout=300)
+
+            except subprocess.TimeoutExpired:
+                process.kill()
+                logger.error(f"Tuner {tuner} scan timed out after 5 minutes")
+                print(f"\n\n⏱️  Error: Tuner {tuner} scan timed out. Trying next tuner.")
+                continue
+
+            # Final status update
+            print(f"\r   Scan progress: {scan_count} frequencies checked                                ")
 
             # Check for resource locked error
             if any("ERROR: resource locked" in line for line in lines):
                 logger.warning(f"Tuner {tuner} is locked by another resource")
-                print(f"Tuner {tuner} is locked by another resource. Skipping to next tuner.")
+                print(f"\n⚠️  Tuner {tuner} is locked by another resource. Skipping to next tuner.")
                 continue
 
-            # More robust check for lock failures - check if any frequency actually locked
-            lock_success = any(line.startswith('LOCK:') and 'none' not in line for line in lines)
-            if not lock_success:
+            # More robust check for lock failures
+            if lock_count == 0:
                 logger.warning(f"Tuner {tuner} failed to lock on any frequency")
-                print(f"Tuner {tuner} failed to lock on any frequency.")
+                print(f"\n⚠️  Tuner {tuner} failed to lock on any frequency.")
                 continue
 
             logger.info(f"Successfully scanned tuner {tuner}, found {len(lines)} lines of data")
-            print(f"Scan completed for tuner {tuner}.")
-
-            # Add progress indicator
-            scan_count = sum(1 for line in lines if line.startswith('SCANNING:'))
-            lock_count = sum(1 for line in lines if line.startswith('LOCK:') and 'none' not in line)
             logger.info(f"Scanned {scan_count} frequencies, locked {lock_count}")
-            print(f"Scanned {scan_count} frequencies, successfully locked on {lock_count} channels.")
+
+            print(f"\n")
+            print(f"   ✅ Scan completed for tuner {tuner}!")
+            print(f"   📊 Results: {scan_count} frequencies scanned, {lock_count} channels found")
+            print()
 
             return lines
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"Tuner {tuner} scan timed out after 5 minutes")
-            print(f"Error: Tuner {tuner} scan timed out. Trying next tuner.")
-            continue
 
         except FileNotFoundError:
             logger.error("hdhomerun_config command not found")
@@ -874,6 +933,9 @@ Examples:
         '''
     )
 
+    parser.add_argument('--version', action='version',
+                       version=f'%(prog)s {VERSION} ({VERSION_DATE})',
+                       help='Show program version and exit')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     parser.add_argument('--test-file', dest='use_test_file', action='store_true',
@@ -890,7 +952,7 @@ Examples:
     # Setup logging
     setup_logging(debug=args.debug)
     logger.info("=" * 60)
-    logger.info("HDHomeRun Channel Scanner v3.0 Starting")
+    logger.info(f"HDHomeRun Channel Scanner v{VERSION} Starting")
     logger.info("=" * 60)
 
     try:
@@ -901,6 +963,17 @@ Examples:
         # Get system name
         system_name = platform.node()
 
+        # Validate and truncate system name if too long
+        # Most filesystems have 255 char filename limit
+        # Reserve space for: _YYYYMMDD_HH.csv (16 chars)
+        MAX_SYSTEM_NAME_LENGTH = 239  # 255 - 16
+
+        if len(system_name) > MAX_SYSTEM_NAME_LENGTH:
+            original_name = system_name
+            system_name = system_name[:MAX_SYSTEM_NAME_LENGTH]
+            logger.warning(f"System name truncated from {len(original_name)} to {MAX_SYSTEM_NAME_LENGTH} chars")
+            print(f"⚠️  Note: Hostname too long, truncated to {MAX_SYSTEM_NAME_LENGTH} characters")
+
         # Get current date and time
         current_datetime = datetime.now()
         date_str = current_datetime.strftime("%Y%m%d")
@@ -909,6 +982,14 @@ Examples:
         # Generate filename
         if args.output:
             filename = args.output
+
+            # Validate user-provided filename length
+            if len(filename) > 255:
+                logger.error(f"User-provided filename too long: {len(filename)} chars (max 255)")
+                print(f"❌ Error: Filename is too long ({len(filename)} characters)")
+                print(f"   Maximum allowed: 255 characters")
+                print(f"   Please use a shorter filename with --output")
+                return 1
         else:
             filename = f"{system_name}_{date_str}_{hour_str}.csv"
 
@@ -984,64 +1065,149 @@ Examples:
             save_to_csv = get_yes_no_input("\nSave results to a CSV file?", default='y')
 
             if save_to_csv:
-                # Check file permissions
+                # Check file permissions with recovery options
                 if not check_file_writable(filename):
-                    print(f"Error: Cannot write to file '{filename}'. Check permissions.")
+                    print(f"\n❌ Cannot write to file: {filename}")
+                    print(f"   Directory: {os.path.dirname(os.path.abspath(filename)) or '.'}")
                     logger.error(f"Cannot write to file: {filename}")
-                    return 1
 
-                try:
-                    logger.info(f"Writing data to CSV file: {filename}")
-                    print(f"\nWriting data to '{filename}'...")
+                    print("\n📋 Your scan data is ready but cannot be saved to this location.")
+                    print("   What would you like to do?\n")
+                    print("   1) Try a different file location")
+                    print("   2) Display results on screen instead")
+                    print("   3) Exit (lose the data)")
 
-                    with open(filename, 'w', newline='') as output_file:
-                        output_writer = csv.writer(output_file)
+                    while True:
+                        try:
+                            choice = input("\nChoice (1-3): ").strip()
 
-                        # Write Header row to the csv file
-                        header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
-                                'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
+                            if choice == '1':
+                                new_path = input("Enter new file path: ").strip()
+                                if check_file_writable(new_path):
+                                    filename = new_path
+                                    logger.info(f"User provided alternate path: {filename}")
+                                    break
+                                else:
+                                    print(f"❌ Still cannot write to: {new_path}")
+                                    print("   Try again or choose option 2 or 3.")
 
-                        for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
-                            header.append(f'Program{i}')
+                            elif choice == '2':
+                                # Display results instead
+                                logger.info("User chose to display results instead of saving")
+                                save_to_csv = False
+                                break
 
-                        output_writer.writerow(header)
+                            elif choice == '3':
+                                confirm = input("\n⚠️  Really exit and lose scan data? (yes/no): ").strip().lower()
+                                if confirm == 'yes':
+                                    logger.warning("User chose to exit, losing scan data")
+                                    return 1
+                            else:
+                                print("Invalid choice. Please enter 1, 2, or 3.")
 
-                        # Iterate through the parsed_data and write rows to the CSV file
-                        for data in parsed_data:
-                            row = [
-                                data.get('Frequency', ''),
-                                data.get('US-Bcast Channel', ''),
-                                data.get('Lock', ''),
-                                data.get('Signal Strength (dBmV)', ''),
-                                data.get('Signal to Noise Quality', ''),
-                                data.get('Symbol Error Quality', ''),
-                                data.get('TSID', '')
-                            ]
+                        except KeyboardInterrupt:
+                            print("\n\nOperation cancelled.")
+                            return 1
+
+                # Only try to save if we still want to save (might have switched to display)
+                if save_to_csv:
+                    try:
+                        logger.info(f"Writing data to CSV file: {filename}")
+                        print(f"\nWriting data to '{filename}'...")
+
+                        with open(filename, 'w', newline='') as output_file:
+                            output_writer = csv.writer(output_file)
+
+                            # Write Header row to the csv file
+                            header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
+                                    'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
 
                             for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
-                                program_key = f'Program{i}'
-                                program_value = data.get(program_key, '')
-                                row.append(program_value)
+                                header.append(f'Program{i}')
 
-                            output_writer.writerow(row)
+                            output_writer.writerow(header)
 
-                    logger.info(f"Data successfully written to '{filename}'")
-                    print(f"Data successfully written to '{filename}'.")
+                            # Iterate through the parsed_data and write rows to the CSV file
+                            for data in parsed_data:
+                                row = [
+                                    data.get('Frequency', ''),
+                                    data.get('US-Bcast Channel', ''),
+                                    data.get('Lock', ''),
+                                    data.get('Signal Strength (dBmV)', ''),
+                                    data.get('Signal to Noise Quality', ''),
+                                    data.get('Symbol Error Quality', ''),
+                                    data.get('TSID', '')
+                                ]
 
-                except IOError as e:
-                    logger.error(f"IO error writing CSV file: {e}")
-                    print(f"Error writing to file: {e}")
-                    return 1
-                except csv.Error as e:
-                    logger.error(f"CSV error: {e}")
-                    print(f"Error writing CSV data: {e}")
-                    return 1
+                                for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
+                                    program_key = f'Program{i}'
+                                    program_value = data.get(program_key, '')
+                                    row.append(program_value)
 
-            else:
-                logger.info("User chose not to save to CSV, displaying data")
-                print("\nDisplaying parsed data:")
-                for data in parsed_data:
-                    print(data)
+                                output_writer.writerow(row)
+
+                        logger.info(f"Data successfully written to '{filename}'")
+                        print(f"Data successfully written to '{filename}'.")
+
+                    except IOError as e:
+                        logger.error(f"IO error writing CSV file: {e}")
+                        print(f"Error writing to file: {e}")
+                        return 1
+                    except csv.Error as e:
+                        logger.error(f"CSV error: {e}")
+                        print(f"Error writing CSV data: {e}")
+                        return 1
+
+            # If user chose not to save OR chose to display instead, show results
+            if not save_to_csv:
+                logger.info("Displaying scan results in formatted view")
+                print("\n" + "="*100)
+                print("📊 SCAN RESULTS")
+                print("="*100)
+
+                # Sort by channel number for easier reading
+                sorted_data = sorted(parsed_data, key=lambda x: int(x.get('US-Bcast Channel', '0')) if x.get('US-Bcast Channel', '0').isdigit() else 0)
+
+                for idx, data in enumerate(sorted_data, 1):
+                    channel = data.get('US-Bcast Channel', '?')
+                    freq = data.get('Frequency', '?')
+                    freq_mhz = f"{int(freq)/1000000:.3f} MHz" if freq != '?' and freq.isdigit() else '?'
+                    lock = data.get('Lock', '?')
+                    signal = data.get('Signal Strength (dBmV)', '?')
+                    snq = data.get('Signal to Noise Quality', '?')
+                    seq = data.get('Symbol Error Quality', '?')
+
+                    # Status indicator
+                    status = '✅ Good' if lock != 'none' else '❌ No Lock'
+                    if lock != 'none' and signal != '?' and signal.lstrip('-').isdigit():
+                        sig_val = int(signal)
+                        if sig_val < 0:
+                            status = '⚠️  Weak'
+                        elif sig_val > 15:
+                            status = '✅ Excellent'
+
+                    # Collect programs
+                    programs = [v for k,v in data.items() if k.startswith('Program') and v]
+
+                    print(f"\n[{idx}] Channel {channel} ({freq_mhz}) {status}")
+                    print(f"    Frequency: {freq} Hz")
+                    print(f"    Lock: {lock}")
+                    print(f"    Signal: {signal} dBmV  |  SNQ: {snq}%  |  SEQ: {seq}%")
+                    print(f"    TSID: {data.get('TSID', 'N/A')}")
+
+                    if programs:
+                        print(f"    Programs ({len(programs)}):")
+                        for prog in programs:
+                            print(f"      • {prog}")
+                    else:
+                        print(f"    Programs: (none detected)")
+
+                    print("    " + "─"*80)
+
+                print(f"\n{'='*100}")
+                locked_count = sum(1 for d in sorted_data if d.get('Lock', 'none') != 'none')
+                print(f"Total: {len(parsed_data)} frequency entries | Locked: {locked_count} channels")
+                print("="*100 + "\n")
 
         # Handle OpenAI query
         if args.auto_openai or get_yes_no_input("\nSend results to OpenAI to determine the city/region?", default='n'):
@@ -1052,6 +1218,14 @@ Examples:
                 stations_list = extract_programs(results)
                 if stations_list:
                     stations_string = ' '.join(stations_list)
+
+                    # Truncate if too long to prevent OpenAI token limit errors
+                    MAX_STATIONS_LENGTH = 2000  # Safe for OpenAI's 4096 token limit
+                    if len(stations_string) > MAX_STATIONS_LENGTH:
+                        logger.warning(f"Station list truncated from {len(stations_string)} to {MAX_STATIONS_LENGTH} chars")
+                        stations_string = stations_string[:MAX_STATIONS_LENGTH] + "..."
+                        print(f"   ⚠️  Note: Station list truncated (too many channels for OpenAI)")
+
                     full_text = prepare_openai_prompt(stations_string)
                     openai_response = get_openai_response(full_text)
 
