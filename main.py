@@ -1,25 +1,117 @@
 # HD Homerun Scan Channels and produce a CSV file of discovered programs
-# Version 2.2 2023-09-25 Mark Munger
+# Version 3.0 2025-11-19 Enhanced with comprehensive error handling and logging
 
 import os
 import csv
 import re
 import time
+import sys
+import shutil
+import argparse
+import subprocess
+import logging
 from datetime import datetime
+from pathlib import Path
 import platform
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 import openai
 
-USE_LOCAL_TEST_FILE = False  # True for local testing with ScanData.txt, otherwise False
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Constants for discovered program count from HDHR
 MIN_PROGRAM = 1
 MAX_PROGRAM = 20
 
-# Check hdhomerun_config before anything else
-# if not os.path.exists("hdhomerun_config"):
-#     print("Error: hdhomerun_config not found")
-#     exit()
+# Signal quality validation ranges
+MIN_SIGNAL_QUALITY = 0
+MAX_SIGNAL_QUALITY = 100
+
+
+# Custom Exception Classes
+class HDHRConfigNotFoundError(Exception):
+    """Raised when hdhomerun_config utility is not found."""
+    pass
+
+
+class DeviceDiscoveryError(Exception):
+    """Raised when device discovery fails."""
+    pass
+
+
+class TunerLockError(Exception):
+    """Raised when tuner fails to lock."""
+    pass
+
+
+class InvalidInputError(Exception):
+    """Raised when user input is invalid."""
+    pass
+
+
+def setup_logging(debug: bool = False) -> None:
+    """
+    Setup logging configuration.
+
+    Args:
+        debug (bool): Enable debug level logging if True.
+    """
+    log_level = logging.DEBUG if debug else logging.INFO
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(log_format))
+
+    # File handler
+    file_handler = logging.FileHandler('hdhr_scan.log')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(log_format))
+
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        handlers=[console_handler, file_handler]
+    )
+
+
+def check_hdhomerun_config() -> bool:
+    """
+    Check if hdhomerun_config utility is available in the system PATH.
+
+    Returns:
+        bool: True if hdhomerun_config is found, False otherwise.
+
+    Raises:
+        HDHRConfigNotFoundError: If hdhomerun_config is not found in PATH.
+    """
+    if shutil.which("hdhomerun_config") is None:
+        logger.error("hdhomerun_config utility not found in system PATH")
+        raise HDHRConfigNotFoundError(
+            "hdhomerun_config utility is required but not found. "
+            "Please install from https://www.silicondust.com/support/downloads/"
+        )
+    logger.debug("hdhomerun_config utility found in PATH")
+    return True
+
+
+def validate_signal_quality(value: int, field_name: str) -> bool:
+    """
+    Validate that signal quality values are within expected range.
+
+    Args:
+        value (int): The signal quality value to validate.
+        field_name (str): Name of the field for logging purposes.
+
+    Returns:
+        bool: True if valid, False otherwise.
+    """
+    if not (MIN_SIGNAL_QUALITY <= value <= MAX_SIGNAL_QUALITY):
+        logger.warning(f"{field_name} value {value} outside expected range "
+                      f"[{MIN_SIGNAL_QUALITY}-{MAX_SIGNAL_QUALITY}]")
+        return False
+    return True
 
 
 # Discover HDHomeRun devices
@@ -48,13 +140,37 @@ def discover_devices() -> List[str]:
         ['hdhomerun device 12345678 found at 192.168.1.100']
     """
     try:
-        result = os.popen("hdhomerun_config discover -4").read()
-        discovered_devices = result.strip().split("\n")
-        # Filter out 'no devices found'
-        return [dev for dev in discovered_devices if "no devices found" not in dev.lower()]
+        logger.debug("Attempting to discover HDHomeRun devices")
+        result = subprocess.run(
+            ["hdhomerun_config", "discover", "-4"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Device discovery failed with return code {result.returncode}")
+            logger.debug(f"stderr: {result.stderr}")
+            raise DeviceDiscoveryError(f"Discovery command failed: {result.stderr}")
+
+        discovered_devices = result.stdout.strip().split("\n")
+        # Filter out 'no devices found' and empty lines
+        devices = [dev for dev in discovered_devices
+                  if dev and "no devices found" not in dev.lower()]
+
+        logger.info(f"Discovered {len(devices)} HDHomeRun device(s)")
+        return devices
+
+    except subprocess.TimeoutExpired:
+        logger.error("Device discovery timed out after 10 seconds")
+        raise DeviceDiscoveryError("Device discovery timed out")
+    except FileNotFoundError:
+        logger.error("hdhomerun_config command not found")
+        raise HDHRConfigNotFoundError("hdhomerun_config utility not found")
     except Exception as discover_error:
-        print("Error discovering devices:", discover_error)
-        return []
+        logger.error(f"Unexpected error during device discovery: {discover_error}", exc_info=True)
+        raise DeviceDiscoveryError(f"Device discovery failed: {discover_error}")
 
 
 # Display a numbered choice menu for devices
@@ -86,52 +202,109 @@ def select_device() -> str:
     retry_count = 0  # Initialize a counter for automatic retries
 
     while True:
-        discovered_devices = discover_devices()
+        try:
+            discovered_devices = discover_devices()
 
-        if discovered_devices:
-            print("Select an HDHomeRun device:")
-            for i, device in enumerate(discovered_devices):
-                print(f"{i + 1}) {device}")
-            print(f"{len(discovered_devices) + 1}) Rediscover devices")  # Add Rediscovery option
+            if discovered_devices:
+                logger.info("Displaying device selection menu")
+                print("\nSelect an HDHomeRun device:")
+                for i, device in enumerate(discovered_devices):
+                    print(f"{i + 1}) {device}")
+                print(f"{len(discovered_devices) + 1}) Rediscover devices")
 
-            choice = int(input("Enter the device number: ")) - 1
+                while True:
+                    try:
+                        user_input = input("\nEnter the device number: ").strip()
+                        choice = int(user_input) - 1
 
-            if 0 <= choice < len(discovered_devices):
-                return discovered_devices[choice]
-            elif choice == len(discovered_devices):  # User selected Rediscovery option
-                continue
+                        if 0 <= choice < len(discovered_devices):
+                            selected = discovered_devices[choice]
+                            logger.info(f"User selected device: {selected}")
+                            return selected
+                        elif choice == len(discovered_devices):  # User selected Rediscovery option
+                            logger.info("User requested device rediscovery")
+                            break
+                        else:
+                            logger.warning(f"Invalid device choice: {choice + 1}")
+                            print(f"Invalid choice. Please enter a number between 1 and {len(discovered_devices) + 1}")
+                    except ValueError:
+                        logger.warning(f"Non-numeric input received: {user_input}")
+                        print("Invalid input. Please enter a number.")
+                    except KeyboardInterrupt:
+                        logger.info("User cancelled device selection")
+                        print("\nOperation cancelled by user.")
+                        return ""
+
             else:
-                print("Invalid choice.")
+                if retry_count < 1:  # Allow one automatic retry
+                    logger.info("No devices found, retrying in 3 seconds")
+                    print("No HDHomeRun devices found. Retrying in 3 seconds...")
+                    time.sleep(3)
+                    retry_count += 1
+                    continue
+                else:
+                    logger.warning("No devices found after retry")
+                    print("No HDHomeRun devices found after retry.")
+                    retry_input = input("Would you like to discover devices again? (y/n): ").strip().lower()
+                    if retry_input == 'y':
+                        logger.info("User requested manual retry")
+                        continue
+                    else:
+                        logger.info("User chose to exit after no devices found")
+                        return ""
 
-        else:
-            if retry_count < 1:  # Allow one automatic retry
-                print("No HDHomeRun devices found. Retrying in 3 seconds...")
-                time.sleep(3)  # Wait for 3 seconds
-                retry_count += 1  # Increment the retry counter
-                continue
-            else:
-                print("No HDHomeRun devices found after retry. Exiting.")
-                return ""
-
-        # Add an option to rediscover devices
-        retry = input("Would you like to discover devices again? (y/n): ")
-        if retry.lower() != 'y':
+        except DeviceDiscoveryError as e:
+            logger.error(f"Device discovery error: {e}")
+            print(f"Error during device discovery: {e}")
+            return ""
+        except KeyboardInterrupt:
+            logger.info("User cancelled device selection")
+            print("\nOperation cancelled by user.")
             return ""
 
 # Prompt the user to choose a tuner or Auto mode
 def select_tuner_mode() -> int:
-    print("Select a tuner or Auto mode:")
+    """
+    Prompt user to select a specific tuner or auto mode.
+
+    Returns:
+        int: Selected tuner number (0-3) or 4 for auto mode, -1 on error.
+
+    Raises:
+        InvalidInputError: If input validation fails after retries.
+    """
+    logger.info("Displaying tuner selection menu")
+    print("\nSelect a tuner or Auto mode:")
     print("0) Tuner 0")
     print("1) Tuner 1")
     print("2) Tuner 2")
     print("3) Tuner 3")
     print("4) Auto mode (Try all tuners)")
-    choice = int(input("Enter the mode number: "))
-    if 0 <= choice <= 4:
-        return choice
-    else:
-        print("Invalid choice.")
-        return -1
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            user_input = input("\nEnter the mode number: ").strip()
+            choice = int(user_input)
+
+            if 0 <= choice <= 4:
+                logger.info(f"User selected tuner mode: {choice}")
+                return choice
+            else:
+                logger.warning(f"Invalid tuner choice: {choice}")
+                print(f"Invalid choice. Please enter a number between 0 and 4.")
+
+        except ValueError:
+            logger.warning(f"Non-numeric input received: {user_input}")
+            print("Invalid input. Please enter a number.")
+        except KeyboardInterrupt:
+            logger.info("User cancelled tuner selection")
+            print("\nOperation cancelled by user.")
+            return -1
+
+    logger.error(f"Failed to get valid input after {max_attempts} attempts")
+    print(f"Too many invalid attempts. Exiting.")
+    return -1
 
 
 # Parse frequency and channel
@@ -218,14 +391,29 @@ def parse_lock(line: str) -> Dict[str, str]:
             'Symbol Error Quality': '100'
         }
     """
-    parts = re.match(r"LOCK: (\w+) \(ss=(\d+) snq=(\d+) seq=(\d+)\)", line)
+    # Updated regex to handle negative signal strength values
+    parts = re.match(r"LOCK: (\w+) \(ss=(-?\d+) snq=(\d+) seq=(\d+)\)", line)
     if parts:
-        return {
+        lock_data = {
             "Lock": parts.group(1),
             "Signal Strength (dBmV)": parts.group(2),
             "Signal to Noise Quality": parts.group(3),
             "Symbol Error Quality": parts.group(4)
         }
+
+        # Validate signal quality values
+        try:
+            snq = int(parts.group(3))
+            seq = int(parts.group(4))
+            validate_signal_quality(snq, "Signal to Noise Quality")
+            validate_signal_quality(seq, "Symbol Error Quality")
+        except ValueError as e:
+            logger.warning(f"Failed to validate signal quality values: {e}")
+
+        logger.debug(f"Parsed lock data: {lock_data}")
+        return lock_data
+
+    logger.debug(f"Failed to parse lock information from line: {line}")
     return {}
 
 # Parse TSID
@@ -397,37 +585,64 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     """
     for tuner in tuners:
         try:
-            command = f"hdhomerun_config {device_id} scan {tuner}"
-            print(f"Querying tuner {tuner} on device {device_id}...")
-            print(f"executing this command with os.open {command}")
+            logger.info(f"Querying tuner {tuner} on device {device_id}")
+            print(f"\nScanning tuner {tuner} on device {device_id}...")
 
-            with os.popen(command) as result_stream:
-                lines = result_stream.readlines()
+            result = subprocess.run(
+                ["hdhomerun_config", device_id, "scan", str(tuner)],
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout for scanning
+                check=False
+            )
 
-                if any("ERROR: resource locked" in line for line in lines):
-                    print(f"Tuner {tuner} on device {device_id} is locked by another resource. Skipping to next tuner.")
-                    continue
+            lines = result.stdout.split('\n')
 
-                if "LOCK: none" in lines:
-                    print(f"Tuner {tuner} on device {device_id} failed to lock")
-                    return []
+            # Check for resource locked error
+            if any("ERROR: resource locked" in line for line in lines):
+                logger.warning(f"Tuner {tuner} is locked by another resource")
+                print(f"Tuner {tuner} is locked by another resource. Skipping to next tuner.")
+                continue
 
-                print(f"Query completed for tuner {tuner} on device {device_id}.")
-                return lines
+            # More robust check for lock failures - check if any frequency actually locked
+            lock_success = any(line.startswith('LOCK:') and 'none' not in line for line in lines)
+            if not lock_success:
+                logger.warning(f"Tuner {tuner} failed to lock on any frequency")
+                print(f"Tuner {tuner} failed to lock on any frequency.")
+                continue
 
-        except OSError as e:
-            print(f"Error executing command: {e}")
-            return []
+            logger.info(f"Successfully scanned tuner {tuner}, found {len(lines)} lines of data")
+            print(f"Scan completed for tuner {tuner}.")
 
-        except ValueError:
-            print(f"Invalid tuner number: {tuner}")
-            return []
+            # Add progress indicator
+            scan_count = sum(1 for line in lines if line.startswith('SCANNING:'))
+            lock_count = sum(1 for line in lines if line.startswith('LOCK:') and 'none' not in line)
+            logger.info(f"Scanned {scan_count} frequencies, locked {lock_count}")
+            print(f"Scanned {scan_count} frequencies, successfully locked on {lock_count} channels.")
+
+            return lines
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Tuner {tuner} scan timed out after 5 minutes")
+            print(f"Error: Tuner {tuner} scan timed out. Trying next tuner.")
+            continue
+
+        except FileNotFoundError:
+            logger.error("hdhomerun_config command not found")
+            raise HDHRConfigNotFoundError("hdhomerun_config utility not found")
+
+        except ValueError as e:
+            logger.error(f"Invalid tuner number: {tuner} - {e}")
+            print(f"Error: Invalid tuner number: {tuner}")
+            continue
 
         except Exception as query_error:
-            print(f"Unexpected error: {query_error}")
-            return []
+            logger.error(f"Unexpected error querying tuner {tuner}: {query_error}", exc_info=True)
+            print(f"Unexpected error with tuner {tuner}: {query_error}")
+            continue
 
-    print("All tuners are either locked or failed to lock. Exiting.")
+    logger.warning("All tuners are either locked or failed to lock")
+    print("\nAll tuners are either locked or failed to lock.")
     return []
 
 
@@ -492,190 +707,393 @@ def prepare_openai_prompt(list_of_stations: str) -> str:
 
 def get_openai_response(prompt: str) -> str:
     """
-    Retrieve a response from OpenAI's GPT-3.5 Turbo model based on a given prompt.
+    Retrieve a response from OpenAI's GPT model based on a given prompt.
 
-    This function sends a prompt to OpenAI's GPT-3.5 Turbo model and retrieves a response. It uses the API key
-    obtained from the environment variables to authenticate the request.
+    This function sends a prompt to OpenAI's ChatCompletion API and retrieves a response.
+    It uses the API key obtained from the environment variables to authenticate the request.
 
     Args:
-        prompt (str): The prompt to be sent to the GPT-3.5 Turbo model.
+        prompt (str): The prompt to be sent to the GPT model.
 
     Returns:
-        str: The text response generated by the model.
+        str: The text response generated by the model, or empty string on error.
 
     Example:
-        >>> prompt = "What is the meaning of life?"
+        >>> prompt = "What city is this from: KABC, KCBS, KTLA"
         >>> response = get_openai_response(prompt)
         >>> print(response)
-        "The meaning of life is a philosophical question with no single answer..."
+        "Los Angeles, California"
     """
     # Read the API key from environment variable
     api_key = os.environ.get("OPENAI_API_KEY")
 
     if api_key is None:
-        print("API key not found in environment variables.")
+        logger.warning("OpenAI API key not found in environment variables")
+        print("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
         return ""
 
     openai.api_key = api_key
 
     try:
-        response = openai.Completion.create(
-            engine="gpt-3.5-turbo-instruct",
-            prompt=prompt,
-            max_tokens=60
+        logger.debug(f"Sending request to OpenAI API with prompt length: {len(prompt)}")
+
+        # Use modern ChatCompletion API instead of deprecated Completion API
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that identifies geographic locations based on TV station call signs."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=60,
+            temperature=0.7
         )
-        return response.choices[0].text.strip()
-    except Exception as error:
-        print(f"An error occurred: {error}")
+
+        result = response.choices[0].message.content.strip()
+        logger.info(f"Received OpenAI response: {result}")
+        return result
+
+    except openai.error.AuthenticationError:
+        logger.error("OpenAI authentication failed - invalid API key")
+        print("Error: Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable.")
         return ""
+
+    except openai.error.RateLimitError:
+        logger.error("OpenAI rate limit exceeded")
+        print("Error: OpenAI rate limit exceeded. Please try again later.")
+        return ""
+
+    except openai.error.APIConnectionError as e:
+        logger.error(f"OpenAI API connection error: {e}")
+        print(f"Error: Unable to connect to OpenAI API. Please check your internet connection.")
+        return ""
+
+    except openai.error.Timeout:
+        logger.error("OpenAI API request timed out")
+        print("Error: OpenAI API request timed out. Please try again.")
+        return ""
+
+    except openai.error.InvalidRequestError as e:
+        logger.error(f"Invalid OpenAI API request: {e}")
+        print(f"Error: Invalid request to OpenAI API: {e}")
+        return ""
+
+    except Exception as error:
+        logger.error(f"Unexpected error calling OpenAI API: {error}", exc_info=True)
+        print(f"An unexpected error occurred with OpenAI: {error}")
+        return ""
+
+
+def check_file_writable(filepath: str) -> bool:
+    """
+    Check if a file path is writable.
+
+    Args:
+        filepath (str): Path to check for write permissions.
+
+    Returns:
+        bool: True if writable, False otherwise.
+    """
+    directory = os.path.dirname(filepath) or '.'
+
+    if not os.path.exists(directory):
+        logger.error(f"Directory does not exist: {directory}")
+        return False
+
+    if not os.access(directory, os.W_OK):
+        logger.error(f"No write permission for directory: {directory}")
+        return False
+
+    # If file exists, check if it's writable
+    if os.path.exists(filepath) and not os.access(filepath, os.W_OK):
+        logger.error(f"No write permission for file: {filepath}")
+        return False
+
+    return True
+
+
+def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
+    """
+    Get validated yes/no input from user.
+
+    Args:
+        prompt (str): The prompt to display to the user.
+        default (str): Default value if user just presses enter ('y' or 'n').
+
+    Returns:
+        bool: True for yes, False for no.
+    """
+    valid_yes = ['1', 'y', 'yes']
+    valid_no = ['2', 'n', 'no']
+
+    while True:
+        try:
+            user_input = input(f"{prompt} (1=yes / 2=no): ").strip().lower()
+
+            if not user_input:
+                return default == 'y'
+
+            if user_input in valid_yes:
+                return True
+            elif user_input in valid_no:
+                return False
+            else:
+                print("Invalid input. Please enter '1' or 'yes' for yes, '2' or 'no' for no.")
+
+        except KeyboardInterrupt:
+            logger.info("User cancelled input")
+            print("\nOperation cancelled by user.")
+            return False
 
 
 def main():
     """
     Main program for HD Homerun Scan Channels.
 
-    This program performs the following steps:
-    1. Retrieves the system name and current date-time.
-    2. Generates a filename for the CSV output.
-    3. Initializes empty lists for parsed_data and results.
-    4. Depending on the value of USE_LOCAL_TEST_FILE, it either:
-       - Selects an HDHomeRun device and retrieves scan results from it, or
-       - Loads scan results from a local test file.
-    5. Parses the scan results.
-    6. Asks the user if they want to save the scan results to a CSV file.
-    7. If the user chooses to save, it writes the parsed data to the CSV file.
-    8. If the user chooses not to save, it displays the parsed data.
-    9. Asks the user if they want to send the scan results to OpenAI to determine the city/region.
-
-    Note:
-    - This program assumes the presence of functions such as select_device(), select_tuner_mode(), query_tuner(),
-      and others which are used in the main logic but are defined elsewhere in the code.
+    This enhanced version includes:
+    - Command-line argument parsing
+    - Comprehensive error handling
+    - Structured logging
+    - Input validation
+    - Progress indicators
+    - Modern OpenAI API integration
 
     Returns:
-        None
+        int: Exit code (0 for success, 1 for error)
     """
-    # Get system name
-    system_name = platform.node()
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='HDHomeRun Channel Scanner - Scan and analyze OTA TV channels',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s                    # Interactive mode
+  %(prog)s --debug            # Enable debug logging
+  %(prog)s --test-file        # Use local test file
+  %(prog)s --no-save          # Don't save to CSV
+  %(prog)s --auto-openai      # Automatically query OpenAI
+        '''
+    )
 
-    # Get current date and time
-    current_datetime = datetime.now()
-    date_str = current_datetime.strftime("%Y%m%d")
-    hour_str = current_datetime.strftime("%H")
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug logging')
+    parser.add_argument('--test-file', dest='use_test_file', action='store_true',
+                       help='Use local ScanData.txt file for testing')
+    parser.add_argument('--no-save', action='store_true',
+                       help='Do not save results to CSV file')
+    parser.add_argument('--auto-openai', action='store_true',
+                       help='Automatically query OpenAI without prompting')
+    parser.add_argument('--output', '-o', type=str,
+                       help='Specify output CSV filename')
 
-    # Generate filename
-    filename = f"{system_name}_{date_str}_{hour_str}.CSV"
+    args = parser.parse_args()
 
-    # Initialize an empty list for parsed_data and results
-    parsed_data = []
-    results = []
+    # Setup logging
+    setup_logging(debug=args.debug)
+    logger.info("=" * 60)
+    logger.info("HDHomeRun Channel Scanner v3.0 Starting")
+    logger.info("=" * 60)
 
     try:
-        if not USE_LOCAL_TEST_FILE:
+        # Check for hdhomerun_config utility
+        if not args.use_test_file:
+            check_hdhomerun_config()
+
+        # Get system name
+        system_name = platform.node()
+
+        # Get current date and time
+        current_datetime = datetime.now()
+        date_str = current_datetime.strftime("%Y%m%d")
+        hour_str = current_datetime.strftime("%H")
+
+        # Generate filename
+        if args.output:
+            filename = args.output
+        else:
+            filename = f"{system_name}_{date_str}_{hour_str}.csv"
+
+        logger.info(f"Output filename: {filename}")
+
+        # Initialize an empty list for parsed_data and results
+        parsed_data = []
+        results = []
+
+        if not args.use_test_file:
             # Select the HDHomeRun Device
             selected_device = select_device()
 
             if not selected_device:
-                print("Exiting the program.")
-                exit()
+                logger.warning("No device selected, exiting")
+                print("No device selected. Exiting the program.")
+                return 1
 
             # Extract the 8-digit device number from the selected device
             device_number = selected_device.split()[2]
+            logger.info(f"Using device: {device_number}")
 
             # Select a tuner or Auto mode
             mode = select_tuner_mode()
             if mode == -1:
-                exit()
+                logger.warning("Invalid tuner selection, exiting")
+                return 1
 
             # Set list of tuners based on selected tuner or AUTO to find an open tuner
             tuners = [mode] if mode != 4 else [0, 1, 2, 3]
+            logger.info(f"Scanning tuners: {tuners}")
 
             # Query the selected tuner(s), return all scan frequency info from HDHR
             results = query_tuner(device_number, tuners)
 
+            if not results:
+                logger.error("No scan results obtained from tuner")
+                print("Error: Could not obtain scan results from tuner.")
+                return 1
+
         else:
             # Load from a local test file
-            with open('ScanData.txt', 'r') as result_file:
-                results = result_file.readlines()
+            logger.info("Using local test file: ScanData.txt")
+            print("Loading data from local test file: ScanData.txt")
+            try:
+                with open('ScanData.txt', 'r') as result_file:
+                    results = result_file.readlines()
+                logger.info(f"Loaded {len(results)} lines from test file")
+            except FileNotFoundError:
+                logger.error("Test file ScanData.txt not found")
+                print("Error: Test file 'ScanData.txt' not found.")
+                return 1
+            except IOError as e:
+                logger.error(f"Error reading test file: {e}")
+                print(f"Error reading test file: {e}")
+                return 1
 
         # Parse the results
-        print("Parsing Scan Results")
+        logger.info("Parsing scan results")
+        print("\nParsing scan results...")
         parsed_data = parse_results_info(results)
 
         if not parsed_data:
-            print("No valid data parsed.")
-            exit()
+            logger.warning("No valid data parsed from results")
+            print("No valid data parsed from scan results.")
+            return 1
 
-    except Exception as general_error:  # Will add specific exceptions in future
-        print(f"An error occurred: {general_error}")
+        logger.info(f"Parsed {len(parsed_data)} frequency entries")
+        print(f"Successfully parsed {len(parsed_data)} frequency entries.")
 
-    # Ask the user if they want to save the scan results to a CSV file
-    user_response = input("Save results to a CSV file? (1 for yes / 2 for no): ")
+        # Handle CSV output
+        if not args.no_save:
+            save_to_csv = get_yes_no_input("\nSave results to a CSV file?", default='y')
 
-    if user_response == '1':
-        try:
-            with open(filename, 'w', newline='') as output_file:
-                output_writer = csv.writer(output_file)
-                # Write header and parsed data to the file
-                # Write Header row to the csv file
-                print("Writing header to CSV file")
-                header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
-                          'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
+            if save_to_csv:
+                # Check file permissions
+                if not check_file_writable(filename):
+                    print(f"Error: Cannot write to file '{filename}'. Check permissions.")
+                    logger.error(f"Cannot write to file: {filename}")
+                    return 1
 
-                for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Interate through program headers
-                    header.append(f'Program{i}')
+                try:
+                    logger.info(f"Writing data to CSV file: {filename}")
+                    print(f"\nWriting data to '{filename}'...")
 
-                output_writer.writerow(header)
+                    with open(filename, 'w', newline='') as output_file:
+                        output_writer = csv.writer(output_file)
 
-                # Iterate through the parsed_data and write rows to the CSV file
-                print("Iterating through the parsed_data and writing rows to the CSV file")
+                        # Write Header row to the csv file
+                        header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
+                                'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
+
+                        for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
+                            header.append(f'Program{i}')
+
+                        output_writer.writerow(header)
+
+                        # Iterate through the parsed_data and write rows to the CSV file
+                        for data in parsed_data:
+                            row = [
+                                data.get('Frequency', ''),
+                                data.get('US-Bcast Channel', ''),
+                                data.get('Lock', ''),
+                                data.get('Signal Strength (dBmV)', ''),
+                                data.get('Signal to Noise Quality', ''),
+                                data.get('Symbol Error Quality', ''),
+                                data.get('TSID', '')
+                            ]
+
+                            for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
+                                program_key = f'Program{i}'
+                                program_value = data.get(program_key, '')
+                                row.append(program_value)
+
+                            output_writer.writerow(row)
+
+                    logger.info(f"Data successfully written to '{filename}'")
+                    print(f"Data successfully written to '{filename}'.")
+
+                except IOError as e:
+                    logger.error(f"IO error writing CSV file: {e}")
+                    print(f"Error writing to file: {e}")
+                    return 1
+                except csv.Error as e:
+                    logger.error(f"CSV error: {e}")
+                    print(f"Error writing CSV data: {e}")
+                    return 1
+
+            else:
+                logger.info("User chose not to save to CSV, displaying data")
+                print("\nDisplaying parsed data:")
                 for data in parsed_data:
-                    row = [
-                        data.get('Frequency', ''),
-                        data.get('US-Bcast Channel', ''),
-                        data.get('Lock', ''),
-                        data.get('Signal Strength (dBmV)', ''),
-                        data.get('Signal to Noise Quality', ''),
-                        data.get('Symbol Error Quality', ''),
-                        data.get('TSID', '')
-                    ]
+                    print(data)
 
-                    for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):  # Interate through program data
-                        program_key = f'Program{i}'
-                        program_value = data.get(program_key, '')
-                        row.append(program_value)
+        # Handle OpenAI query
+        if args.auto_openai or get_yes_no_input("\nSend results to OpenAI to determine the city/region?", default='n'):
+            if results:
+                logger.info("Querying OpenAI for geographic location")
+                print("\nQuerying OpenAI to identify geographic region...")
 
-                    output_writer.writerow(row)
+                stations_list = extract_programs(results)
+                if stations_list:
+                    stations_string = ' '.join(stations_list)
+                    full_text = prepare_openai_prompt(stations_string)
+                    openai_response = get_openai_response(full_text)
 
-                print(f"Data successfully written to '{filename}'.")
-        except Exception as e:
-            print(f"An error occurred while writing to the file: {e}")
+                    if openai_response:
+                        logger.info(f"OpenAI identified region: {openai_response}")
+                        print(f"\nThe broadcast region is: {openai_response}")
+                    else:
+                        print("Could not get a response from OpenAI.")
+                else:
+                    logger.warning("No station data to send to OpenAI")
+                    print("No station data available to send to OpenAI.")
+            else:
+                logger.warning("No results available for OpenAI query")
+                print("No results available to send to OpenAI.")
 
-    elif user_response == '2':
-        print("Displaying the parsed data:")
-        for data in parsed_data:
-            print(data)
-    else:
-        print("Invalid input. Please respond with '1' for yes or '2' for no.")
+        logger.info("Program completed successfully")
+        print("\nScan completed successfully!")
+        return 0
 
-    # Ask the user if they want to send the scan results to OpenAI
-    # print(results)
-    user_response = input("Send results to OpenAI to determine the city/region? (1 for yes / 2 for no): ")
+    except HDHRConfigNotFoundError as e:
+        logger.error(f"HDHomeRun config utility error: {e}")
+        print(f"Error: {e}")
+        return 1
 
-    if user_response == '1' and results:
-        stations_list = extract_programs(results)
-        stations_string = ' '.join(stations_list) + '\n'
-        # print (stations_string)
-        full_text = prepare_openai_prompt(stations_string)
-        openai_response = get_openai_response(full_text)
-        if openai_response:
-            print(f"The city or region is {openai_response}")
-        else:
-            print("Could not get a response from OpenAI.")
-    elif user_response == '2':
-        print("Not sending data to OpenAI.")
-    else:
-        print("Invalid input. Please respond with '1' for yes or '2' for no.")
+    except DeviceDiscoveryError as e:
+        logger.error(f"Device discovery error: {e}")
+        print(f"Error: {e}")
+        return 1
+
+    except KeyboardInterrupt:
+        logger.info("Program interrupted by user")
+        print("\n\nProgram interrupted by user. Exiting.")
+        return 130  # Standard exit code for Ctrl+C
+
+    except Exception as e:
+        logger.error(f"Unexpected error in main: {e}", exc_info=True)
+        print(f"An unexpected error occurred: {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
