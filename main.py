@@ -1285,6 +1285,9 @@ Examples:
                 # Sort by channel number for easier reading
                 sorted_data = sorted(parsed_data, key=lambda x: int(x.get('US-Bcast Channel', '0')) if x.get('US-Bcast Channel', '0').isdigit() else 0)
 
+                weak_channels = []
+                problem_channels = []
+
                 for idx, data in enumerate(sorted_data, 1):
                     channel = data.get('US-Bcast Channel', '?')
                     freq = data.get('Frequency', '?')
@@ -1294,14 +1297,41 @@ Examples:
                     snq = data.get('Signal to Noise Quality', '?')
                     seq = data.get('Symbol Error Quality', '?')
 
-                    # Status indicator
+                    # Status indicator with detailed signal analysis
                     status = '✅ Good' if lock != 'none' else '❌ No Lock'
+                    signal_warning = None
+
                     if lock != 'none' and signal != '?' and signal.lstrip('-').isdigit():
                         sig_val = int(signal)
-                        if sig_val < 0:
+                        if sig_val < -10:
+                            status = '❌ Very Weak'
+                            signal_warning = "Signal too weak - May not work reliably"
+                            problem_channels.append(f"Ch {channel}")
+                        elif sig_val < 0:
                             status = '⚠️  Weak'
-                        elif sig_val > 15:
-                            status = '✅ Excellent'
+                            signal_warning = "Weak signal - Consider antenna adjustment"
+                            weak_channels.append(f"Ch {channel}")
+                        elif sig_val < 10:
+                            status = '✅ Good'
+                        elif sig_val < 15:
+                            status = '✅ Strong'
+                        else:
+                            status = '🌟 Excellent'
+
+                    # Check signal quality metrics
+                    if lock != 'none' and snq != '?' and snq.isdigit():
+                        snq_val = int(snq)
+                        if snq_val < 50:
+                            if not signal_warning:
+                                signal_warning = "Poor signal quality (low SNQ)"
+                                problem_channels.append(f"Ch {channel}")
+
+                    if lock != 'none' and seq != '?' and seq.isdigit():
+                        seq_val = int(seq)
+                        if seq_val < 90:
+                            if not signal_warning:
+                                signal_warning = "Symbol errors detected (low SEQ)"
+                                problem_channels.append(f"Ch {channel}")
 
                     # Collect programs
                     programs = [v for k,v in data.items() if k.startswith('Program') and v]
@@ -1311,6 +1341,10 @@ Examples:
                     print(f"    Lock: {lock}")
                     print(f"    Signal: {signal} dBmV  |  SNQ: {snq}%  |  SEQ: {seq}%")
                     print(f"    TSID: {data.get('TSID', 'N/A')}")
+
+                    # Show signal warning if present
+                    if signal_warning:
+                        print(f"    ⚠️  {signal_warning}")
 
                     if programs:
                         print(f"    Programs ({len(programs)}):")
@@ -1324,6 +1358,28 @@ Examples:
                 print(f"\n{'='*100}")
                 locked_count = sum(1 for d in sorted_data if d.get('Lock', 'none') != 'none')
                 print(f"Total: {len(parsed_data)} frequency entries | Locked: {locked_count} channels")
+
+                # Signal strength summary and warnings
+                if weak_channels or problem_channels:
+                    print()
+                    print("⚠️  SIGNAL WARNINGS:")
+                    if problem_channels:
+                        unique_problem = list(dict.fromkeys(problem_channels))  # Remove duplicates
+                        print(f"   • Problem channels: {', '.join(unique_problem)}")
+                        print(f"     → May experience dropouts or fail to tune")
+                    if weak_channels:
+                        unique_weak = list(dict.fromkeys(weak_channels))  # Remove duplicates
+                        print(f"   • Weak channels: {', '.join(unique_weak)}")
+                        print(f"     → Consider repositioning antenna")
+                    print()
+                    print("   HOW TO IMPROVE:")
+                    print("   1. Reorient antenna (try different directions)")
+                    print("   2. Raise antenna height if possible")
+                    print("   3. Use outdoor antenna for better reception")
+                    print("   4. Check for obstructions (buildings, trees)")
+                    print("   5. Visit https://www.fcc.gov/media/engineering/dtvmaps")
+                    print("      to see expected signal coverage in your area")
+
                 print("="*100 + "\n")
 
         # Handle OpenAI query
