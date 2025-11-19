@@ -1379,7 +1379,11 @@ Examples:
     parser.add_argument('--auto-openai', action='store_true',
                        help='Automatically query OpenAI without prompting')
     parser.add_argument('--output', '-o', type=str,
-                       help='Specify output CSV filename')
+                       help='Specify output filename (CSV or JSON based on --format)')
+    parser.add_argument('--format', type=str, choices=['csv', 'json'], default='csv',
+                       help='Output format: csv (default) or json')
+    parser.add_argument('--json', action='store_true',
+                       help='Output in JSON format (shorthand for --format json)')
 
     # Automation flags for unattended operation
     parser.add_argument('--device-id', type=str, metavar='ID',
@@ -1439,6 +1443,10 @@ Examples:
     if not args.no_save and not config.get('save_csv'):
         args.no_save = True
         logger.debug("Save CSV disabled from config")
+
+    # Handle --json flag (shorthand for --format json)
+    if args.json:
+        args.format = 'json'
 
     # Handle --verbose (implies --debug)
     if args.verbose:
@@ -1595,9 +1603,11 @@ Examples:
 
         # Handle CSV output
         if not args.no_save:
-            save_to_csv = get_yes_no_input("\nSave results to a CSV file?", default='y')
+            # Adjust prompt based on format
+            format_name = args.format.upper()
+            save_to_file = get_yes_no_input(f"\nSave results to a {format_name} file?", default='y')
 
-            if save_to_csv:
+            if save_to_file:
                 # Check file permissions with recovery options
                 if not check_file_writable(filename):
                     print(f"\n❌ Cannot write to file: {filename}")
@@ -1627,7 +1637,7 @@ Examples:
                             elif choice == '2':
                                 # Display results instead
                                 logger.info("User chose to display results instead of saving")
-                                save_to_csv = False
+                                save_to_file = False
                                 break
 
                             elif choice == '3':
@@ -1643,56 +1653,107 @@ Examples:
                             return 1
 
                 # Only try to save if we still want to save (might have switched to display)
-                if save_to_csv:
+                if save_to_file:
                     try:
-                        logger.info(f"Writing data to CSV file: {filename}")
-                        print(f"\nWriting data to '{filename}'...")
+                        if args.format == 'json':
+                            # JSON export
+                            logger.info(f"Writing data to JSON file: {filename}")
+                            print(f"\nWriting data to '{filename}'...")
 
-                        with open(filename, 'w', newline='') as output_file:
-                            output_writer = csv.writer(output_file)
+                            # Prepare JSON structure with metadata
+                            json_output = {
+                                "scan_info": {
+                                    "tool": "HDHomeRun Channel Scanner",
+                                    "version": VERSION,
+                                    "scan_date": datetime.now().isoformat(),
+                                    "device_id": device_number if not args.use_test_file else "test_file",
+                                    "tuners_scanned": tuners if not args.use_test_file else [0],
+                                    "total_frequencies": len(parsed_data),
+                                    "locked_channels": sum(1 for d in parsed_data if d.get('Lock', 'none') != 'none')
+                                },
+                                "channels": []
+                            }
 
-                            # Write Header row to the csv file
-                            header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
-                                    'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
-
-                            for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
-                                header.append(f'Program{i}')
-
-                            output_writer.writerow(header)
-
-                            # Iterate through the parsed_data and write rows to the CSV file
+                            # Convert parsed_data to more readable JSON structure
                             for data in parsed_data:
-                                row = [
-                                    data.get('Frequency', ''),
-                                    data.get('US-Bcast Channel', ''),
-                                    data.get('Lock', ''),
-                                    data.get('Signal Strength (dBmV)', ''),
-                                    data.get('Signal to Noise Quality', ''),
-                                    data.get('Symbol Error Quality', ''),
-                                    data.get('TSID', '')
-                                ]
+                                # Collect all programs (non-empty)
+                                programs = []
+                                for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
+                                    program = data.get(f'Program{i}', '')
+                                    if program:
+                                        programs.append(program)
+
+                                channel_entry = {
+                                    "frequency_hz": data.get('Frequency', ''),
+                                    "us_broadcast_channel": data.get('US-Bcast Channel', ''),
+                                    "lock_status": data.get('Lock', ''),
+                                    "signal_strength_dbmv": data.get('Signal Strength (dBmV)', ''),
+                                    "signal_to_noise_quality": data.get('Signal to Noise Quality', ''),
+                                    "symbol_error_quality": data.get('Symbol Error Quality', ''),
+                                    "tsid": data.get('TSID', ''),
+                                    "programs": programs,
+                                    "program_count": len(programs)
+                                }
+
+                                json_output["channels"].append(channel_entry)
+
+                            # Write JSON with pretty formatting
+                            with open(filename, 'w') as output_file:
+                                json.dump(json_output, output_file, indent=2)
+
+                            logger.info(f"Successfully wrote {len(parsed_data)} entries to JSON")
+                            print(f"Data successfully written to '{filename}'.")
+
+                        else:
+                            # CSV export (original code)
+                            logger.info(f"Writing data to CSV file: {filename}")
+                            print(f"\nWriting data to '{filename}'...")
+
+                            with open(filename, 'w', newline='') as output_file:
+                                output_writer = csv.writer(output_file)
+
+                                # Write Header row to the csv file
+                                header = ['Frequency', 'US-Bcast Channel', 'Lock', 'Signal Strength (dBmV)',
+                                        'Signal to Noise Quality', 'Symbol Error Quality', 'TSID']
 
                                 for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
-                                    program_key = f'Program{i}'
-                                    program_value = data.get(program_key, '')
-                                    row.append(program_value)
+                                    header.append(f'Program{i}')
 
-                                output_writer.writerow(row)
+                                output_writer.writerow(header)
 
-                        logger.info(f"Data successfully written to '{filename}'")
-                        print(f"Data successfully written to '{filename}'.")
+                                # Iterate through the parsed_data and write rows to the CSV file
+                                for data in parsed_data:
+                                    row = [
+                                        data.get('Frequency', ''),
+                                        data.get('US-Bcast Channel', ''),
+                                        data.get('Lock', ''),
+                                        data.get('Signal Strength (dBmV)', ''),
+                                        data.get('Signal to Noise Quality', ''),
+                                        data.get('Symbol Error Quality', ''),
+                                        data.get('TSID', '')
+                                    ]
+
+                                    for i in range(MIN_PROGRAM, MAX_PROGRAM + 1):
+                                        program_key = f'Program{i}'
+                                        program_value = data.get(program_key, '')
+                                        row.append(program_value)
+
+                                    output_writer.writerow(row)
+
+                            logger.info(f"Data successfully written to '{filename}'.")
+                            print(f"Data successfully written to '{filename}'.")
 
                     except IOError as e:
-                        logger.error(f"IO error writing CSV file: {e}")
+                        logger.error(f"IO error writing file: {e}")
                         print(f"Error writing to file: {e}")
                         return 1
-                    except csv.Error as e:
-                        logger.error(f"CSV error: {e}")
-                        print(f"Error writing CSV data: {e}")
+                    except (csv.Error, json.JSONDecodeError) as e:
+                        logger.error(f"Data export error: {e}")
+                        print(f"Error writing data: {e}")
                         return 1
 
             # If user chose not to save OR chose to display instead, show results
-            if not save_to_csv:
+            if not save_to_file:
                 logger.info("Displaying scan results in formatted view")
                 print("\n" + "="*100)
                 print("📊 SCAN RESULTS")
