@@ -134,6 +134,9 @@ python3 main.py [OPTIONS]
 | `--help`, `-h` | Show help message and exit |
 | `--version` | Show program version and exit |
 | `--glossary` | Show technical glossary explaining scan terms and exit |
+| `--show-config` | Display current configuration and exit |
+| `--edit-config` | Edit configuration interactively and exit |
+| `--reset-config` | Reset configuration to defaults and exit |
 | `--debug` | Enable debug logging for detailed troubleshooting |
 | `--verbose`, `-v` | Verbose mode with detailed operation info (implies --debug) |
 | `--quiet`, `-q` | Quiet mode: suppress progress output (for automation/scripts) |
@@ -175,6 +178,122 @@ python3 main.py --device-id 12345678 --tuner 0 --quiet --output scan.csv
 ```bash
 python3 main.py --glossary
 ```
+
+**Configuration management:**
+```bash
+# View current configuration
+python3 main.py --show-config
+
+# Edit configuration interactively
+python3 main.py --edit-config
+
+# Reset configuration to defaults
+python3 main.py --reset-config
+```
+
+## Configuration File
+
+The scanner supports a persistent configuration file to save your preferences.
+
+### Location
+
+Configuration is stored at: `~/.hdhr_scanner_config.json`
+
+### Available Settings
+
+- **device_id**: Default HDHomeRun device ID (skip device selection)
+- **tuner**: Default tuner number 0-3 (skip tuner selection)
+- **output_directory**: Default location for CSV files
+- **auto_openai**: Automatically query OpenAI (true/false)
+- **quiet**: Enable quiet mode by default (true/false)
+- **debug**: Enable debug logging by default (true/false)
+- **save_csv**: Save to CSV by default (true/false)
+- **last_device_id**: Last used device (auto-saved after scan)
+- **last_tuner**: Last used tuner (auto-saved after scan)
+
+### Managing Configuration
+
+**View Current Configuration:**
+```bash
+python3 main.py --show-config
+```
+
+Output example:
+```
+⚙️  CURRENT CONFIGURATION
+================================================================================
+
+Configuration file: /home/user/.hdhr_scanner_config.json
+
+DEFAULTS (used when flags not specified):
+  Device ID:        12345678
+  Tuner:            0
+  Output Directory: /home/user/scans
+  Auto OpenAI:      False
+  Quiet Mode:       False
+  Debug Mode:       False
+  Save CSV:         True
+
+LAST USED:
+  Last Device ID:   12345678
+  Last Tuner:       0
+
+NOTE: Command-line flags override configuration file settings
+```
+
+**Edit Configuration Interactively:**
+```bash
+python3 main.py --edit-config
+```
+
+This launches an interactive editor where you can:
+- Set default device ID and tuner
+- Specify output directory (with directory creation)
+- Configure boolean settings (auto-openai, quiet, debug, save_csv)
+- Save changes when done
+
+**Reset to Defaults:**
+```bash
+python3 main.py --reset-config
+```
+
+Deletes the configuration file and resets all settings to defaults.
+
+### Configuration Precedence
+
+Settings are applied in this order (later overrides earlier):
+1. Default values (built-in)
+2. Configuration file values
+3. Command-line arguments (highest priority)
+
+Example:
+- Config file sets `device_id: "12345678"`
+- You run: `python3 main.py --device-id ABCD1234`
+- Result: Uses ABCD1234 (command-line wins)
+
+### Example Configuration File
+
+```json
+{
+    "device_id": "12345678",
+    "tuner": 0,
+    "output_directory": "/home/user/tv_scans",
+    "auto_openai": false,
+    "quiet": false,
+    "debug": false,
+    "save_csv": true,
+    "last_device_id": "12345678",
+    "last_tuner": 0
+}
+```
+
+### Auto-Save Feature
+
+After each successful scan, the tool automatically saves:
+- **last_device_id**: Device you just used
+- **last_tuner**: Tuner you just used
+
+These values help you quickly repeat scans with the same setup.
 
 ## User Tutorial
 
