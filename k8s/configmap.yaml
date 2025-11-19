@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hdhr-scanner-config
+  labels:
+    app: hdhr-scanner
+    version: "3.0"
+data:
+  # Scanner configuration
+  LOG_LEVEL: "INFO"
+  DEBUG_MODE: "false"
+  QUIET_MODE: "false"
+  AUTO_SAVE_CSV: "true"
+  AUTO_OPENAI: "false"
+
+  # Network configuration
+  DISCOVERY_TIMEOUT: "10"
+  SCAN_TIMEOUT: "300"
+
+  # Environment
+  ENVIRONMENT: "production"
+  TZ: "UTC"

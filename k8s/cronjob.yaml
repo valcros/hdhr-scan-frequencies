@@ -1,0 +1,206 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hdhr-scanner-daily
+  labels:
+    app: hdhr-scanner
+    version: "3.0"
+spec:
+  # Run daily at 3:00 AM UTC
+  schedule: "0 3 * * *"
+
+  # Keep last 3 successful and 1 failed job
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+
+  # Job template
+  jobTemplate:
+    metadata:
+      labels:
+        app: hdhr-scanner
+        version: "3.0"
+    spec:
+      # Retry failed jobs up to 2 times
+      backoffLimit: 2
+
+      # Job timeout: 30 minutes
+      activeDeadlineSeconds: 1800
+
+      template:
+        metadata:
+          labels:
+            app: hdhr-scanner
+            version: "3.0"
+        spec:
+          # Use host network for HDHomeRun device discovery
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+
+          # Security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+
+          containers:
+          - name: hdhr-scanner
+            image: ghcr.io/yourusername/hdhr-scanner:3.0
+            imagePullPolicy: Always
+
+            # Run automated scan
+            command:
+            - python3
+            - main.py
+            - --device-id
+            - $(HDHR_DEVICE_ID)
+            - --tuner
+            - "0"
+            - --quiet
+            - --output
+            - /app/output/scan_$(date +%Y%m%d).csv
+
+            # Environment variables from ConfigMap
+            envFrom:
+            - configMapRef:
+                name: hdhr-scanner-config
+
+            # Sensitive environment variables from Secret
+            env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hdhr-scanner-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: HDHR_DEVICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hdhr-scanner-secrets
+                  key: HDHR_DEVICE_ID
+                  optional: true
+
+            # Resource limits
+            resources:
+              limits:
+                cpu: "1000m"
+                memory: "512Mi"
+              requests:
+                cpu: "500m"
+                memory: "256Mi"
+
+            # Volume mounts
+            volumeMounts:
+            - name: output
+              mountPath: /app/output
+            - name: logs
+              mountPath: /app/logs
+
+          # Restart policy for CronJobs
+          restartPolicy: OnFailure
+
+          # Volumes
+          volumes:
+          - name: output
+            persistentVolumeClaim:
+              claimName: hdhr-scanner-output
+          - name: logs
+            persistentVolumeClaim:
+              claimName: hdhr-scanner-logs
+
+---
+# Weekly scan (Sundays at 2:00 AM UTC)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hdhr-scanner-weekly
+  labels:
+    app: hdhr-scanner
+    version: "3.0"
+    schedule: weekly
+spec:
+  schedule: "0 2 * * 0"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+
+  jobTemplate:
+    metadata:
+      labels:
+        app: hdhr-scanner
+        version: "3.0"
+        schedule: weekly
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+
+      template:
+        metadata:
+          labels:
+            app: hdhr-scanner
+            version: "3.0"
+            schedule: weekly
+        spec:
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+
+          containers:
+          - name: hdhr-scanner
+            image: ghcr.io/yourusername/hdhr-scanner:3.0
+            imagePullPolicy: Always
+
+            command:
+            - python3
+            - main.py
+            - --device-id
+            - $(HDHR_DEVICE_ID)
+            - --tuner
+            - "0"
+            - --quiet
+            - --output
+            - /app/output/weekly_scan_$(date +%Y%m%d).csv
+
+            envFrom:
+            - configMapRef:
+                name: hdhr-scanner-config
+
+            env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hdhr-scanner-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: HDHR_DEVICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hdhr-scanner-secrets
+                  key: HDHR_DEVICE_ID
+                  optional: true
+
+            resources:
+              limits:
+                cpu: "1000m"
+                memory: "512Mi"
+              requests:
+                cpu: "500m"
+                memory: "256Mi"
+
+            volumeMounts:
+            - name: output
+              mountPath: /app/output
+            - name: logs
+              mountPath: /app/logs
+
+          restartPolicy: OnFailure
+
+          volumes:
+          - name: output
+            persistentVolumeClaim:
+              claimName: hdhr-scanner-output
+          - name: logs
+            persistentVolumeClaim:
+              claimName: hdhr-scanner-logs

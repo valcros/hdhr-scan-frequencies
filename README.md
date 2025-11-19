@@ -794,6 +794,8 @@ The script returns standard exit codes:
 
 ## DevOps & Production Deployment
 
+> **🚀 DevOps Team?** See [DEVOPS_QUICKSTART.md](DEVOPS_QUICKSTART.md) for streamlined deployment instructions with Makefile commands, Kubernetes manifests, and CI/CD integration.
+
 ### Quick Installation
 
 The fastest way to install HDHomeRun Scanner in production:

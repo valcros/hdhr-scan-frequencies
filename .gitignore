@@ -125,4 +125,36 @@ dmypy.json
 # HDHomeRun Scanner specific
 hdhr_scan.log
 *.csv
+*.json
+!requirements*.txt
+!package*.json
+!.github/**/*.json
 !Sample_output.txt
+
+# Output directories
+output/
+logs/
+scans/
+
+# Configuration files (use .env.example as template)
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+
+# Docker volumes
+docker-volumes/
+
+# Kubernetes secrets
+k8s-secrets/
+*.secret.yaml
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# IDE
+.vscode/
+.idea/
