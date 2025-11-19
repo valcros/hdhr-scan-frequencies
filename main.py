@@ -126,7 +126,7 @@ def validate_signal_quality(value: int, field_name: str) -> bool:
 
 
 # Discover HDHomeRun devices
-def discover_devices() -> List[str]:
+def discover_devices(quiet: bool = False) -> List[str]:
     """
     Discover Silicon Dust HDHomeRun devices on the local network.
 
@@ -134,6 +134,9 @@ def discover_devices() -> List[str]:
     connected to the local network. It returns a list of discovered devices as returned
     by the hdhomerun_config utility which can be downloaded here:
     https://www.silicondust.com/support/downloads/
+
+    Args:
+        quiet (bool): If True, suppress progress output (for automation).
 
     Returns:
         List[str]: A list of discovered HDHomeRun devices as strings.
@@ -151,9 +154,10 @@ def discover_devices() -> List[str]:
         ['hdhomerun device 12345678 found at 192.168.1.100']
     """
     try:
-        # Provide user feedback before starting
-        print("🔍 Searching for HDHomeRun devices on your network...")
-        print("   (This may take up to 10 seconds)\n")
+        # Provide user feedback before starting (unless quiet mode)
+        if not quiet:
+            print("🔍 Searching for HDHomeRun devices on your network...")
+            print("   (This may take up to 10 seconds)\n")
 
         logger.debug("Attempting to discover HDHomeRun devices")
         result = subprocess.run(
@@ -176,13 +180,14 @@ def discover_devices() -> List[str]:
 
         logger.info(f"Discovered {len(devices)} HDHomeRun device(s)")
 
-        # Provide feedback on results
-        if len(devices) == 0:
-            print("   → No devices found\n")
-        elif len(devices) == 1:
-            print(f"   → Found 1 device\n")
-        else:
-            print(f"   → Found {len(devices)} devices\n")
+        # Provide feedback on results (unless quiet mode)
+        if not quiet:
+            if len(devices) == 0:
+                print("   → No devices found\n")
+            elif len(devices) == 1:
+                print(f"   → Found 1 device\n")
+            else:
+                print(f"   → Found {len(devices)} devices\n")
 
         return devices
 
@@ -581,7 +586,7 @@ def parse_results_info(scan_results: List[str]) -> List[Dict[str, str]]:
 
 # Query the selected tuner and return lines of scan results
 # Modified Query the selected tuner or Auto select tuner
-def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
+def query_tuner(device_id: str, tuners: List[int], quiet: bool = False) -> List[str]:
     """
     Query HDHomeRun tuners for scan results.
 
@@ -591,6 +596,7 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     Args:
         device_id (str): The unique identifier of the HDHomeRun device.
         tuners (List[int]): A list of tuner numbers to query.
+        quiet (bool): If True, suppress progress output (for automation).
 
     Returns:
         List[str]: A list of strings representing the scan results.
@@ -610,9 +616,10 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
     for tuner in tuners:
         try:
             logger.info(f"Querying tuner {tuner} on device {device_id}")
-            print(f"\n📡 Scanning tuner {tuner} on device {device_id}...")
-            print("   This will take 3-5 minutes. Progress shown below:")
-            print()
+            if not quiet:
+                print(f"\n📡 Scanning tuner {tuner} on device {device_id}...")
+                print("   This will take 3-5 minutes. Progress shown below:")
+                print()
 
             # Use Popen for real-time progress output
             process = subprocess.Popen(
@@ -638,19 +645,21 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
                     if line:
                         lines.append(line)
 
-                    # Show progress for each frequency scanned
+                    # Show progress for each frequency scanned (unless quiet)
                     if line.startswith('SCANNING:'):
                         match = re.search(r'(\d+) \(us-bcast:(\d+)\)', line)
                         if match:
                             current_channel = match.group(2)
                             scan_count += 1
                             # Update on same line for cleaner output
-                            print(f"\r   Scanning: Channel {current_channel} ({scan_count} frequencies checked)     ", end='', flush=True)
+                            if not quiet:
+                                print(f"\r   Scanning: Channel {current_channel} ({scan_count} frequencies checked)     ", end='', flush=True)
 
                     elif line.startswith('LOCK:') and 'none' not in line:
                         lock_count += 1
                         # New line for lock success
-                        print(f"\r   ✅ Locked: Channel {current_channel} (Total locks: {lock_count})             ")
+                        if not quiet:
+                            print(f"\r   ✅ Locked: Channel {current_channel} (Total locks: {lock_count})             ")
 
                 # Wait for process to complete
                 process.wait(timeout=300)
@@ -662,27 +671,31 @@ def query_tuner(device_id: str, tuners: List[int]) -> List[str]:
                 continue
 
             # Final status update
-            print(f"\r   Scan progress: {scan_count} frequencies checked                                ")
+            if not quiet:
+                print(f"\r   Scan progress: {scan_count} frequencies checked                                ")
 
             # Check for resource locked error
             if any("ERROR: resource locked" in line for line in lines):
                 logger.warning(f"Tuner {tuner} is locked by another resource")
-                print(f"\n⚠️  Tuner {tuner} is locked by another resource. Skipping to next tuner.")
+                if not quiet:
+                    print(f"\n⚠️  Tuner {tuner} is locked by another resource. Skipping to next tuner.")
                 continue
 
             # More robust check for lock failures
             if lock_count == 0:
                 logger.warning(f"Tuner {tuner} failed to lock on any frequency")
-                print(f"\n⚠️  Tuner {tuner} failed to lock on any frequency.")
+                if not quiet:
+                    print(f"\n⚠️  Tuner {tuner} failed to lock on any frequency.")
                 continue
 
             logger.info(f"Successfully scanned tuner {tuner}, found {len(lines)} lines of data")
             logger.info(f"Scanned {scan_count} frequencies, locked {lock_count}")
 
-            print(f"\n")
-            print(f"   ✅ Scan completed for tuner {tuner}!")
-            print(f"   📊 Results: {scan_count} frequencies scanned, {lock_count} channels found")
-            print()
+            if not quiet:
+                print(f"\n")
+                print(f"   ✅ Scan completed for tuner {tuner}!")
+                print(f"   📊 Results: {scan_count} frequencies scanned, {lock_count} channels found")
+                print()
 
             return lines
 
@@ -947,7 +960,21 @@ Examples:
     parser.add_argument('--output', '-o', type=str,
                        help='Specify output CSV filename')
 
+    # Automation flags for unattended operation
+    parser.add_argument('--device-id', type=str, metavar='ID',
+                       help='Specify HDHomeRun device ID (e.g., 12345678) to skip device selection')
+    parser.add_argument('--tuner', type=int, choices=[0, 1, 2, 3], metavar='N',
+                       help='Specify tuner number (0-3) to skip tuner selection')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                       help='Quiet mode: suppress progress output (for automation/scripts)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                       help='Verbose mode: show detailed operation info (implies --debug)')
+
     args = parser.parse_args()
+
+    # Handle --verbose (implies --debug)
+    if args.verbose:
+        args.debug = True
 
     # Setup logging
     setup_logging(debug=args.debug)
@@ -1001,29 +1028,56 @@ Examples:
 
         if not args.use_test_file:
             # Select the HDHomeRun Device
-            selected_device = select_device()
+            if args.device_id:
+                # Use device ID from command line (automation mode)
+                device_number = args.device_id
+                logger.info(f"Using device from --device-id: {device_number}")
+                if not args.quiet:
+                    print(f"Using device: {device_number}")
 
-            if not selected_device:
-                logger.warning("No device selected, exiting")
-                print("No device selected. Exiting the program.")
-                return 1
+                # Verify device exists
+                devices = discover_devices(quiet=args.quiet)
+                device_found = any(device_number in dev for dev in devices)
+                if not device_found:
+                    logger.error(f"Device {device_number} not found on network")
+                    print(f"❌ Error: Device {device_number} not found")
+                    print(f"   Available devices: {len(devices)}")
+                    for dev in devices:
+                        print(f"   - {dev}")
+                    return 1
+            else:
+                # Interactive device selection
+                selected_device = select_device()
 
-            # Extract the 8-digit device number from the selected device
-            device_number = selected_device.split()[2]
-            logger.info(f"Using device: {device_number}")
+                if not selected_device:
+                    logger.warning("No device selected, exiting")
+                    print("No device selected. Exiting the program.")
+                    return 1
+
+                # Extract the 8-digit device number from the selected device
+                device_number = selected_device.split()[2]
+                logger.info(f"Using device: {device_number}")
 
             # Select a tuner or Auto mode
-            mode = select_tuner_mode()
-            if mode == -1:
-                logger.warning("Invalid tuner selection, exiting")
-                return 1
+            if args.tuner is not None:
+                # Use tuner from command line (automation mode)
+                mode = args.tuner
+                logger.info(f"Using tuner from --tuner: {mode}")
+                if not args.quiet:
+                    print(f"Using tuner: {mode}")
+            else:
+                # Interactive tuner selection
+                mode = select_tuner_mode()
+                if mode == -1:
+                    logger.warning("Invalid tuner selection, exiting")
+                    return 1
 
             # Set list of tuners based on selected tuner or AUTO to find an open tuner
             tuners = [mode] if mode != 4 else [0, 1, 2, 3]
             logger.info(f"Scanning tuners: {tuners}")
 
             # Query the selected tuner(s), return all scan frequency info from HDHR
-            results = query_tuner(device_number, tuners)
+            results = query_tuner(device_number, tuners, quiet=args.quiet)
 
             if not results:
                 logger.error("No scan results obtained from tuner")
