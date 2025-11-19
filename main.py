@@ -885,7 +885,7 @@ def check_file_writable(filepath: str) -> bool:
 
 def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
     """
-    Get validated yes/no input from user.
+    Get validated yes/no input from user with standard CLI format.
 
     Args:
         prompt (str): The prompt to display to the user.
@@ -893,13 +893,22 @@ def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
 
     Returns:
         bool: True for yes, False for no.
+
+    Note:
+        Follows GNU/POSIX convention: capital letter shows default (Y/n or y/N).
     """
-    valid_yes = ['1', 'y', 'yes']
-    valid_no = ['2', 'n', 'no']
+    valid_yes = ['y', 'yes']
+    valid_no = ['n', 'no']
+
+    # Format prompt with capital letter showing default
+    if default == 'y':
+        suffix = " (Y/n): "
+    else:
+        suffix = " (y/N): "
 
     while True:
         try:
-            user_input = input(f"{prompt} (1=yes / 2=no): ").strip().lower()
+            user_input = input(f"{prompt}{suffix}").strip().lower()
 
             if not user_input:
                 return default == 'y'
@@ -909,7 +918,7 @@ def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
             elif user_input in valid_no:
                 return False
             else:
-                print("Invalid input. Please enter '1' or 'yes' for yes, '2' or 'no' for no.")
+                print("Invalid input. Please enter 'y' for yes or 'n' for no.")
 
         except KeyboardInterrupt:
             logger.info("User cancelled input")
