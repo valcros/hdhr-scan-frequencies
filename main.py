@@ -926,6 +926,56 @@ def get_yes_no_input(prompt: str, default: str = 'n') -> bool:
             return False
 
 
+def show_welcome_screen():
+    """
+    Display welcome screen for first-time users.
+
+    Shows helpful information about the tool, requirements, and tips.
+    Creates a marker file to prevent showing welcome on subsequent runs.
+    """
+    welcome_marker = Path.home() / ".hdhr_scan_welcomed"
+
+    # Skip if user has seen welcome before
+    if welcome_marker.exists():
+        return
+
+    print("\n" + "=" * 80)
+    print("  🎉 WELCOME TO HDHomeRun CHANNEL SCANNER")
+    print("=" * 80)
+    print()
+    print("This tool scans Over-The-Air (OTA) TV channels using your HDHomeRun device")
+    print("and generates a detailed report of available channels and programs.")
+    print()
+    print("📋 WHAT IT DOES:")
+    print("  • Discovers HDHomeRun devices on your network")
+    print("  • Scans all available TV frequencies (takes 3-5 minutes)")
+    print("  • Identifies channels, signal strength, and programs")
+    print("  • Saves results to CSV for analysis")
+    print("  • Optional: Uses OpenAI to generate viewing recommendations")
+    print()
+    print("🔧 REQUIREMENTS:")
+    print("  • HDHomeRun device connected to your network")
+    print("  • 'hdhomerun_config' utility installed")
+    print("    Download: https://www.silicondust.com/support/downloads/")
+    print()
+    print("💡 QUICK TIPS:")
+    print("  • Use --help to see all options")
+    print("  • Use --quiet for automation/scripts")
+    print("  • Use --device-id and --tuner to skip interactive prompts")
+    print("  • Logs saved to: hdhr_scan.log")
+    print()
+    print("=" * 80)
+    print()
+
+    try:
+        # Create marker file so welcome doesn't show again
+        welcome_marker.touch()
+        logger.info("First-time welcome screen displayed")
+    except Exception as e:
+        # Non-critical if marker file can't be created
+        logger.debug(f"Could not create welcome marker: {e}")
+
+
 def main():
     """
     Main program for HD Homerun Scan Channels.
@@ -990,6 +1040,10 @@ Examples:
     logger.info("=" * 60)
     logger.info(f"HDHomeRun Channel Scanner v{VERSION} Starting")
     logger.info("=" * 60)
+
+    # Show welcome screen for first-time users (unless quiet mode)
+    if not args.quiet:
+        show_welcome_screen()
 
     try:
         # Check for hdhomerun_config utility
